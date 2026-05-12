@@ -409,7 +409,7 @@ def make_model_inputs(df):
     x_features = features.reshape(1, 504)
 
     electron_flux = df["electron_flux"].astype(float).values
-    electron_flux = np.clip(electron_flux, 1e-30, None)
+    electron_flux = np.clip(electron_flux, 4, None)
     x_eflux = (np.log10(electron_flux) / 7.0).astype(np.float32).reshape(1, 72)
 
     return [x_features, x_eflux]
