@@ -1,1 +1,36 @@
+name: Run electron flux forecast
 
+on:
+  schedule:
+    - cron: "10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install numpy pandas requests h5py tensorflow==2.10.*
+
+      - name: Run forecast
+        run: |
+          python scripts/run_forecast.py
+
+      - name: Commit forecast outputs
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add data/forecast.json data/input_latest_3days.csv data/latest_inputs.json
+          git commit -m "Update electron flux forecast" || echo "No changes to commit"
+          git push
