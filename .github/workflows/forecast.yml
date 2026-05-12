@@ -23,7 +23,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install numpy pandas requests h5py tensorflow==2.10.*
+          pip install "numpy<2" 
+          pip install pandas requests h5py 
+          pip install tensorflow==2.10.*
 
       - name: Run forecast script
         run: |
