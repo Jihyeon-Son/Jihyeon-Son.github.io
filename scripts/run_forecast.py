@@ -58,7 +58,12 @@ NORM = {
 
 def utc_now_floor_hour():
     now = datetime.now(timezone.utc)
-    return now.replace(minute=0, second=0, microsecond=0)
+
+    # Use the last fully completed hourly bin.
+    # Example:
+    # run at 07:30 UTC -> forecast_base_time = 06:00 UTC
+    # input last bin = 06:00-06:59 UTC
+    return now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
 
 
 def fetch_json(url):
