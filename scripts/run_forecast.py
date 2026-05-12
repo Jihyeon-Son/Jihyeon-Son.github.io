@@ -406,11 +406,13 @@ def make_model_inputs(df):
         axis=1,
     ).astype(np.float32)
 
-    x_features = features.reshape(1, 504)
+    x_features = features.reshape(1, 72, 7)
 
-    electron_flux = df["electron_flux"].astype(float).values
-    electron_flux = np.clip(electron_flux, 4, None)
-    x_eflux = (np.log10(electron_flux) / 7.0).astype(np.float32).reshape(1, 72)
+    raw_flux = df["electron_flux"].astype(float).values
+    raw_flux = np.clip(raw_flux, 4, None)
+    log_flux = np.log10(raw_flux)
+    x_eflux = (log_flux / 7.0).astype(np.float32)
+    x_eflux = x_eflux.reshape(1, 72, 1)
 
     return [x_features, x_eflux]
 
