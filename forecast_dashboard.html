@@ -1,9 +1,48 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Forecast Dashboard</title>
+
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            font-family: Arial;
+            margin: 40px;
+        }
+
+        canvas {
+            max-width: 1000px;
+            max-height: 500px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+    </style>
 </head>
+
 <body>
-    <h1>>2 MeV Geostationary Electron Flux Forecast</h1>
+
+    <h1>Solar Wind Forecast Dashboard</h1>
+
+    <button onclick="runPrediction()">
+        Run Forecast
+    </button>
+
+    <p id="status">Loading model...</p>
+
+    <canvas id="forecastChart"></canvas>
+
+    <script src="js/dashboard.js"></script>
+
 </body>
 </html>
