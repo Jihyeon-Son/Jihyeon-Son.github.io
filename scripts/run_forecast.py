@@ -204,73 +204,84 @@ def load_kp():
 
 
 def parse_kyoto_dst_presentmonth(html, reference_time):
-    """
-    Parse Kyoto quicklook Dst presentmonth page.
-
-    This parser is intentionally flexible because the page is plain-text-like HTML.
-    It extracts lines beginning with day number followed by hourly Dst values.
-    """
 
     year = reference_time.year
     month = reference_time.month
 
     text = re.sub(r"<[^>]+>", " ", html)
+
     lines = text.splitlines()
 
     records = []
 
     for line in lines:
-        parts = line.strip().split()
-        if len(parts) < 10:
+
+        # DAY line만
+        m = re.match(r"^\s*(\d{1,2})\s+", line)
+
+        if not m:
             continue
 
-        try:
-            day = int(parts[0])
-        except ValueError:
-            continue
+        day = int(m.group(1))
 
-        if not (1 <= day <= 31):
-            continue
+        # day 이후 문자열
+        rest = line[m.end():]
+
+        # fixed width parsing
+        # Kyoto Dst는 대략 4-char width
+        chunks = []
+
+        width = 4
+
+        for i in range(0, len(rest), width):
+            chunk = rest[i:i+width].strip()
+            chunks.append(chunk)
 
         values = []
-        for token in parts[1:25]:
-            token = token.strip()
-            if token in ["9999", "99999", "-", "--"]:
+
+        for chunk in chunks[:24]:
+
+            if chunk == "":
+                values.append(np.nan)
+                continue
+
+            # pure missing sentinel
+            if chunk == "9999":
                 values.append(np.nan)
                 continue
 
             try:
-                values.append(float(token))
-            except ValueError:
-                # Handles compact negative values poorly separated in text.
-                found = re.findall(r"-?\d+", token)
-                for item in found:
-                    try:
-                        values.append(float(item))
-                    except ValueError:
-                        pass
+                val = float(chunk)
 
-        for hour, val in enumerate(values[:24]):
+                # impossible dst
+                if abs(val) > 1000:
+                    val = np.nan
+
+                values.append(val)
+
+            except Exception:
+                values.append(np.nan)
+
+        for hour, val in enumerate(values):
+
             try:
-                t = datetime(year, month, day, hour, tzinfo=timezone.utc)
+                t = datetime(
+                    year,
+                    month,
+                    day,
+                    hour,
+                    tzinfo=timezone.utc
+                )
+
             except ValueError:
                 continue
 
-            records.append({"time": t, "Dst": val})
+            records.append({
+                "time": t,
+                "Dst": val
+            })
 
     return pd.DataFrame(records)
-
-
-def load_dst(reference_time):
-    try:
-        html = fetch_text(URLS["dst"])
-        df = parse_kyoto_dst_presentmonth(html, reference_time)
-        if not df.empty:
-            return df[["time", "Dst"]]
-    except Exception as exc:
-        print(f"[WARN] Failed to load Kyoto Dst: {exc}")
-
-    return pd.DataFrame(columns=["time", "Dst"])
 
 
 # ============================================================
