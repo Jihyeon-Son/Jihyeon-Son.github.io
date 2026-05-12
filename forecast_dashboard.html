@@ -215,18 +215,41 @@
 
                     y: {
                         type: "logarithmic",
-                        
+                    
                         min: 1e0,
                         max: 1e7,
-                        
+                    
                         title: {
                             display: true,
                             text: ">2 MeV Electron Flux"
                         },
+                    
+                        afterBuildTicks: (axis) => {
+                    
+                            axis.ticks = [];
+                    
+                            for (let i = 0; i <= 7; i++) {
+                                axis.ticks.push({
+                                    value: Math.pow(10, i)
+                                });
+                            }
+                        },
+                    
                         ticks: {
                             callback: function(value) {
-                                return Number(value).toExponential(0);
+                    
+                                const exponent = Math.log10(value);
+                    
+                                if (Number.isInteger(exponent)) {
+                                    return "10^" + exponent;
+                                }
+                    
+                                return "";
                             }
+                        },
+                    
+                        grid: {
+                            color: "#d0d0d0"
                         }
                     }
                 }
