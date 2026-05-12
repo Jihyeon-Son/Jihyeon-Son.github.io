@@ -84,9 +84,9 @@
 <body>
 <div class="container">
 
-    <h1>Electron Flux Forecast Dashboard</h1>
+    <h1>🛰️ 72-hour Electron Flux Forecast</h1>
     <p class="subtitle">
-        72-hour forecast of &gt;2 MeV electron flux using recent solar wind and geomagnetic parameters. <br>
+        72-hour forecast of &gt;2 MeV geostationary electron flux using recent solar wind and geomagnetic parameters. <br>
         Paper: Son et al. "72-Hour Time Series Forecasting of Hourly Relativistic Electron Fluxes at Geostationary Orbit by Deep Learning" (Space Weather, 2022)
     </p>
 
@@ -234,19 +234,40 @@
                                 });
                             }
                         },
-                    
-                        ticks: {
-                            callback: function(value) {
-                    
-                                const exponent = Math.log10(value);
-                    
-                                if (Number.isInteger(exponent)) {
-                                    return "10" + exponent.toString().sup();
-                                }
-                    
-                                return "";
-                            }
-                        },
+                                    
+                ticks: {
+                    callback: function(value) {
+                
+                        const exponent = Math.log10(value);
+                
+                        if (Number.isInteger(exponent)) {
+                
+                            const superscripts = {
+                                "0": "⁰",
+                                "1": "¹",
+                                "2": "²",
+                                "3": "³",
+                                "4": "⁴",
+                                "5": "⁵",
+                                "6": "⁶",
+                                "7": "⁷",
+                                "8": "⁸",
+                                "9": "⁹",
+                                "-": "⁻"
+                            };
+                
+                            const expStr = exponent
+                                .toString()
+                                .split("")
+                                .map(c => superscripts[c] || c)
+                                .join("");
+                
+                            return "10" + expStr;
+                        }
+                
+                        return "";
+                    }
+                },
                     
                         grid: {
                             color: "#d0d0d0"
