@@ -283,7 +283,17 @@ def parse_kyoto_dst_presentmonth(html, reference_time):
 
     return pd.DataFrame(records)
 
+def load_dst(reference_time):
+    try:
+        html = fetch_text(URLS["dst"])
+        df = parse_kyoto_dst_presentmonth(html, reference_time)
+        if not df.empty:
+            return df[["time", "Dst"]]
+    except Exception as exc:
+        print(f"[WARN] Failed to load Kyoto Dst: {exc}")
 
+    return pd.DataFrame(columns=["time", "Dst"])
+    
 # ============================================================
 # Hourly preprocessing
 # ============================================================
