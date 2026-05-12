@@ -2,47 +2,269 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <title>Electron Flux Forecast Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Forecast Dashboard</title>
-
-    <!-- TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
 
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
+    <!-- Time scale support -->
+    <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+
     <style>
         body {
-            font-family: Arial;
-            margin: 40px;
+            margin: 0;
+            padding: 30px;
+            font-family: Arial, sans-serif;
+            background: #f7f8fb;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 25px;
+        }
+
+        .status-card {
+            background: white;
+            border-radius: 12px;
+            padding: 18px 22px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+        }
+
+        .status-card p {
+            margin: 6px 0;
+        }
+
+        .chart-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
         }
 
         canvas {
-            max-width: 1000px;
-            max-height: 500px;
+            width: 100%;
+            height: 520px;
         }
 
-        button {
-            padding: 10px 20px;
-            font-size: 16px;
-            margin-bottom: 20px;
+        .error {
+            color: #b00020;
+            font-weight: bold;
+        }
+
+        .reload-btn {
+            margin-top: 15px;
+            padding: 9px 16px;
+            border: none;
+            border-radius: 8px;
+            background: #0d6efd;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .reload-btn:hover {
+            background: #084fc7;
         }
     </style>
 </head>
 
 <body>
+<div class="container">
 
-    <h1>>2 MeV GOES Electron Flux Forecast Dashboard</h1>
+    <h1>Electron Flux Forecast Dashboard</h1>
+    <p class="subtitle">
+        72-hour forecast of &gt;2 MeV electron flux using recent solar wind and geomagnetic parameters.
+    </p>
 
-    <button onclick="runPrediction()">
-        Run Forecast
-    </button>
+    <div class="status-card">
+        <p><strong>Status:</strong> <span id="status">Loading forecast data...</span></p>
+        <p><strong>Last updated:</strong> <span id="createdTime">-</span></p>
+        <p><strong>Forecast base time:</strong> <span id="baseTime">-</span></p>
+        <p><strong>Forecast period:</strong> <span id="period">-</span></p>
 
-    <p id="status">Loading model...</p>
+        <button class="reload-btn" onclick="loadForecast()">
+            Reload data
+        </button>
+    </div>
 
-    <canvas id="forecastChart"></canvas>
+    <div class="chart-card">
+        <canvas id="forecastChart"></canvas>
+    </div>
 
-    <script src="js/dashboard.js"></script>
+</div>
+
+<script>
+    let forecastChart = null;
+
+    function formatUTC(timeString) {
+        if (!timeString) return "-";
+
+        const date = new Date(timeString);
+
+        return date.toLocaleString("en-US", {
+            timeZone: "UTC",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false
+        }) + " UTC";
+    }
+
+    function buildDatasets(data) {
+        const history = data.history || [];
+        const forecast = data.forecast || [];
+
+        const historyData = history.map(d => ({
+            x: d.time,
+            y: d.electron_flux
+        }));
+
+        const forecastData = forecast.map(d => ({
+            x: d.time,
+            y: d.electron_flux_pred
+        }));
+
+        return [
+            {
+                label: "Observed electron flux",
+                data: historyData,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.25
+            },
+            {
+                label: "Forecast electron flux",
+                data: forecastData,
+                borderWidth: 2,
+                pointRadius: 0,
+                borderDash: [8, 5],
+                tension: 0.25
+            }
+        ];
+    }
+
+    function drawChart(data) {
+        const ctx = document.getElementById("forecastChart").getContext("2d");
+
+        if (forecastChart) {
+            forecastChart.destroy();
+        }
+
+        forecastChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                datasets: buildDatasets(data)
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+
+                interaction: {
+                    mode: "nearest",
+                    intersect: false
+                },
+
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: "top"
+                    },
+
+                    tooltip: {
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return "";
+                                return formatUTC(items[0].raw.x);
+                            },
+                            label: function(item) {
+                                const value = item.raw.y;
+                                return item.dataset.label + ": " + Number(value).toExponential(3);
+                            }
+                        }
+                    }
+                },
+
+                scales: {
+                    x: {
+                        type: "time",
+                        time: {
+                            unit: "day",
+                            tooltipFormat: "yyyy-MM-dd HH:mm"
+                        },
+                        title: {
+                            display: true,
+                            text: "Time [UTC]"
+                        }
+                    },
+
+                    y: {
+                        type: "logarithmic",
+                        title: {
+                            display: true,
+                            text: ">2 MeV Electron Flux"
+                        },
+                        ticks: {
+                            callback: function(value) {
+                                return Number(value).toExponential(0);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async function loadForecast() {
+        const statusEl = document.getElementById("status");
+
+        try {
+            statusEl.className = "";
+            statusEl.textContent = "Loading forecast data...";
+
+            const response = await fetch("data/forecast.json?cache_bust=" + Date.now());
+
+            if (!response.ok) {
+                throw new Error("Could not load data/forecast.json");
+            }
+
+            const data = await response.json();
+
+            statusEl.textContent = data.status || "Forecast loaded.";
+            document.getElementById("createdTime").textContent =
+                formatUTC(data.created_utc);
+
+            document.getElementById("baseTime").textContent =
+                formatUTC(data.forecast_base_time_utc);
+
+            document.getElementById("period").textContent =
+                formatUTC(data.target_start_utc) + " - " + formatUTC(data.target_end_utc);
+
+            drawChart(data);
+
+        } catch (error) {
+            console.error(error);
+            statusEl.className = "error";
+            statusEl.textContent = "Failed to load forecast.json. Check if GitHub Actions created data/forecast.json.";
+        }
+    }
+
+    loadForecast();
+</script>
 
 </body>
 </html>
