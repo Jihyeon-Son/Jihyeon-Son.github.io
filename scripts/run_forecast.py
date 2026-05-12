@@ -320,14 +320,20 @@ def build_hourly_input_dataframe():
 
     If forecast_time is 2026-05-03 23:00 UTC,
     input range is 2026-05-01 00:00 UTC through 2026-05-03 23:00 UTC.
+
+    For Kp24, we additionally need 23 hours before the model input start,
+    so Kp is loaded on a 96-hour grid first.
     """
 
     forecast_time = utc_now_floor_hour()
     input_start = forecast_time - timedelta(hours=71)
+    
+    kp_start = input_start - timedelta(hours=23)
 
+    # Kp24 계산을 위해 96시간 grid 생성
     hourly_grid = pd.DataFrame({
         "time": pd.date_range(
-            input_start,
+            kp_start,
             forecast_time,
             freq="1h",
             tz="UTC",
@@ -379,11 +385,16 @@ def build_hourly_input_dataframe():
     # At each hourly timestamp, Kp24 means sum over previous 24 hourly Kp values including current hour.
     df["Kp24"] = (
         df["Kp"]
-        .rolling(window=24, min_periods=1)
+        .rolling(window=24, min_periods=24)
         .sum()
     )
-
-    return df, forecast_time
+    df["Kp24"] = df["Kp24"].interpolate(limit_direction="both").ffill().bfill()
+    df_model = df[df["time"] >= input_start].copy()
+    
+    if len(df_model) != 72:
+        raise ValueError(f"Expected 72 rows for model input, got {len(df_model)}")
+        
+    return df_model, forecast_time
 
 
 # ============================================================
