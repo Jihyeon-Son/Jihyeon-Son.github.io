@@ -8,11 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Chewy&display=swap" rel="stylesheet">
-    
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <!-- Time scale support -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
 
@@ -30,6 +27,10 @@
             margin: auto;
         }
 
+        .forecast-section {
+            margin-bottom: 55px;
+        }
+
         h1 {
             margin-bottom: 5px;
             font-family: "Chewy", system-ui;
@@ -39,7 +40,14 @@
 
         .subtitle {
             color: #666;
+            margin-top: 8px;
             margin-bottom: 25px;
+            padding-left: 22px;
+        }
+
+        .subtitle li {
+            margin-bottom: 6px;
+            line-height: 1.45;
         }
 
         .status-card {
@@ -61,13 +69,24 @@
             box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
         }
 
-        canvas {
+        .chart-wrap {
+            position: relative;
             width: 100%;
             height: 520px;
         }
 
         .error {
             color: #b00020;
+            font-weight: bold;
+        }
+
+        .standby {
+            color: #9a6700;
+            font-weight: bold;
+        }
+
+        .active {
+            color: #137333;
             font-weight: bold;
         }
 
@@ -85,42 +104,102 @@
         .reload-btn:hover {
             background: #084fc7;
         }
+
+        .section-divider {
+            border: 0;
+            border-top: 1px solid #d9dce3;
+            margin: 50px 0;
+        }
+
+        @media (max-width: 700px) {
+            body {
+                padding: 16px;
+            }
+
+            .chart-card {
+                padding: 14px;
+            }
+
+            .chart-wrap {
+                height: 420px;
+            }
+        }
     </style>
 </head>
 
 <body>
 <div class="container">
 
-    <h1>🛰️ 72-hour Electron Flux Forecast</h1>
-    <ul class="subtitle">
-        <li> 72-hour forecast of &gt;2 MeV geostationary electron flux using recent solar wind and geomagnetic parameters. </li>
-        <li> Paper: Son et al. "72-Hour Time Series Forecasting of Hourly Relativistic Electron Fluxes at Geostationary Orbit by Deep Learning" (Space Weather, 2022) </li>
-    </p>
+    <section class="forecast-section">
+        <h1>🛰️ 72-hour Electron Flux Forecast</h1>
 
-    <div class="status-card">
-        <p><strong>Status:</strong> <span id="status">Loading forecast data...</span></p>
-        <p><strong>Last updated:</strong> <span id="createdTime">-</span></p>
-        <p><strong>Forecast base time:</strong> <span id="baseTime">-</span></p>
-        <p><strong>Forecast period:</strong> <span id="period">-</span></p>
+        <ul class="subtitle">
+            <li>72-hour forecast of &gt;2 MeV geostationary electron flux using recent solar wind and geomagnetic parameters.</li>
+            <li>Paper: Son et al. “72-Hour Time Series Forecasting of Hourly Relativistic Electron Fluxes at Geostationary Orbit by Deep Learning” (Space Weather, 2022)</li>
+        </ul>
 
-        <button class="reload-btn" onclick="loadForecast()">
-            Reload data
-        </button>
-    </div>
+        <div class="status-card">
+            <p><strong>Status:</strong> <span id="electronStatus">Loading forecast data...</span></p>
+            <p><strong>Last updated:</strong> <span id="electronCreatedTime">-</span></p>
+            <p><strong>Forecast base time:</strong> <span id="electronBaseTime">-</span></p>
+            <p><strong>Forecast period:</strong> <span id="electronPeriod">-</span></p>
 
-    <div class="chart-card">
-        <canvas id="forecastChart"></canvas>
-    </div>
+            <button class="reload-btn" onclick="loadElectronForecast()">
+                Reload electron-flux data
+            </button>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-wrap">
+                <canvas id="electronForecastChart"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <hr class="section-divider">
+
+    <section class="forecast-section">
+        <h1>🧲 12-hour SYM-H Forecast</h1>
+
+        <ul class="subtitle">
+            <li>12-hour forecast of the SYM-H index using recent 30-minute solar-wind and geomagnetic parameters.</li>
+            <li>The model runs only when the strong southward-IMF trigger condition is satisfied.</li>
+        </ul>
+
+        <div class="status-card">
+            <p><strong>Status:</strong> <span id="symhStatus">Loading forecast data...</span></p>
+            <p><strong>Last updated:</strong> <span id="symhCreatedTime">-</span></p>
+            <p><strong>Forecast base time:</strong> <span id="symhBaseTime">-</span></p>
+            <p><strong>Forecast period:</strong> <span id="symhPeriod">-</span></p>
+            <p><strong>Latest Bz:</strong> <span id="symhLatestBz">-</span></p>
+            <p><strong>Latest observed SYM-H:</strong> <span id="symhLatestObserved">-</span></p>
+            <p><strong>Trigger:</strong> <span id="symhTrigger">-</span></p>
+            <p><strong>Message:</strong> <span id="symhMessage">-</span></p>
+
+            <button class="reload-btn" onclick="loadSymhForecast()">
+                Reload SYM-H data
+            </button>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-wrap">
+                <canvas id="symhForecastChart"></canvas>
+            </div>
+        </div>
+    </section>
 
 </div>
 
 <script>
-    let forecastChart = null;
+    let electronForecastChart = null;
+    let symhForecastChart = null;
 
     function formatUTC(timeString) {
         if (!timeString) return "-";
 
         const date = new Date(timeString);
+
+        if (Number.isNaN(date.getTime())) return "-";
 
         return date.toLocaleString("en-US", {
             timeZone: "UTC",
@@ -133,31 +212,55 @@
         }) + " UTC";
     }
 
-    function buildDatasets(data) {
+    function superscriptPower(value) {
+        const exponent = Math.log10(value);
+
+        if (!Number.isInteger(exponent)) return "";
+
+        const superscripts = {
+            "0": "⁰",
+            "1": "¹",
+            "2": "²",
+            "3": "³",
+            "4": "⁴",
+            "5": "⁵",
+            "6": "⁶",
+            "7": "⁷",
+            "8": "⁸",
+            "9": "⁹",
+            "-": "⁻"
+        };
+
+        const expStr = exponent
+            .toString()
+            .split("")
+            .map(c => superscripts[c] || c)
+            .join("");
+
+        return "10" + expStr;
+    }
+
+    function buildElectronDatasets(data) {
         const history = data.history || [];
         const forecast = data.forecast || [];
-
-        const historyData = history.map(d => ({
-            x: d.time,
-            y: d.electron_flux
-        }));
-
-        const forecastData = forecast.map(d => ({
-            x: d.time,
-            y: d.electron_flux_pred
-        }));
 
         return [
             {
                 label: "Observed electron flux",
-                data: historyData,
+                data: history.map(d => ({
+                    x: d.time,
+                    y: d.electron_flux
+                })),
                 borderWidth: 2,
                 pointRadius: 0,
                 tension: 0.25
             },
             {
                 label: "Forecast electron flux",
-                data: forecastData,
+                data: forecast.map(d => ({
+                    x: d.time,
+                    y: d.electron_flux_pred
+                })),
                 borderWidth: 2,
                 pointRadius: 0,
                 borderDash: [8, 5],
@@ -166,33 +269,33 @@
         ];
     }
 
-    function drawChart(data) {
-        const ctx = document.getElementById("forecastChart").getContext("2d");
+    function drawElectronChart(data) {
+        const ctx = document
+            .getElementById("electronForecastChart")
+            .getContext("2d");
 
-        if (forecastChart) {
-            forecastChart.destroy();
+        if (electronForecastChart) {
+            electronForecastChart.destroy();
         }
 
-        forecastChart = new Chart(ctx, {
+        electronForecastChart = new Chart(ctx, {
             type: "line",
             data: {
-                datasets: buildDatasets(data)
+                datasets: buildElectronDatasets(data)
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-
+                parsing: false,
                 interaction: {
                     mode: "nearest",
                     intersect: false
                 },
-
                 plugins: {
                     legend: {
                         display: true,
                         position: "top"
                     },
-
                     tooltip: {
                         callbacks: {
                             title: function(items) {
@@ -201,12 +304,12 @@
                             },
                             label: function(item) {
                                 const value = item.raw.y;
-                                return item.dataset.label + ": " + Number(value).toExponential(3);
+                                return item.dataset.label + ": " +
+                                    Number(value).toExponential(3);
                             }
                         }
                     }
                 },
-
                 scales: {
                     x: {
                         type: "time",
@@ -219,63 +322,26 @@
                             text: "Time [UTC]"
                         }
                     },
-
                     y: {
                         type: "logarithmic",
-                    
                         min: 1e0,
                         max: 1e7,
-                    
                         title: {
                             display: true,
                             text: ">2 MeV Electron Flux"
                         },
-                    
-                        afterBuildTicks: (axis) => {
-                    
+                        afterBuildTicks: axis => {
                             axis.ticks = [];
-                    
+
                             for (let i = 0; i <= 7; i++) {
                                 axis.ticks.push({
                                     value: Math.pow(10, i)
                                 });
                             }
                         },
-                                    
-                ticks: {
-                    callback: function(value) {
-                
-                        const exponent = Math.log10(value);
-                
-                        if (Number.isInteger(exponent)) {
-                
-                            const superscripts = {
-                                "0": "⁰",
-                                "1": "¹",
-                                "2": "²",
-                                "3": "³",
-                                "4": "⁴",
-                                "5": "⁵",
-                                "6": "⁶",
-                                "7": "⁷",
-                                "8": "⁸",
-                                "9": "⁹",
-                                "-": "⁻"
-                            };
-                
-                            const expStr = exponent
-                                .toString()
-                                .split("")
-                                .map(c => superscripts[c] || c)
-                                .join("");
-                
-                            return "10" + expStr;
-                        }
-                
-                        return "";
-                    }
-                },
-                    
+                        ticks: {
+                            callback: superscriptPower
+                        },
                         grid: {
                             color: "#d0d0d0"
                         }
@@ -285,14 +351,16 @@
         });
     }
 
-    async function loadForecast() {
-        const statusEl = document.getElementById("status");
+    async function loadElectronForecast() {
+        const statusEl = document.getElementById("electronStatus");
 
         try {
             statusEl.className = "";
             statusEl.textContent = "Loading forecast data...";
 
-            const response = await fetch("data/forecast.json?cache_bust=" + Date.now());
+            const response = await fetch(
+                "data/forecast.json?cache_bust=" + Date.now()
+            );
 
             if (!response.ok) {
                 throw new Error("Could not load data/forecast.json");
@@ -301,25 +369,243 @@
             const data = await response.json();
 
             statusEl.textContent = data.status || "Forecast loaded.";
-            document.getElementById("createdTime").textContent =
+
+            document.getElementById("electronCreatedTime").textContent =
                 formatUTC(data.created_utc);
 
-            document.getElementById("baseTime").textContent =
+            document.getElementById("electronBaseTime").textContent =
                 formatUTC(data.forecast_base_time_utc);
 
-            document.getElementById("period").textContent =
-                formatUTC(data.target_start_utc) + " - " + formatUTC(data.target_end_utc);
+            document.getElementById("electronPeriod").textContent =
+                formatUTC(data.target_start_utc) + " - " +
+                formatUTC(data.target_end_utc);
 
-            drawChart(data);
+            drawElectronChart(data);
 
         } catch (error) {
             console.error(error);
             statusEl.className = "error";
-            statusEl.textContent = "Failed to load forecast.json. Check if GitHub Actions created data/forecast.json.";
+            statusEl.textContent =
+                "Failed to load forecast.json. Check whether GitHub Actions created data/forecast.json.";
         }
     }
 
-    loadForecast();
+    function getSymhValue(row) {
+        if (!row) return null;
+
+        const candidates = [
+            row.sym_h,
+            row["sym-h"],
+            row.symh,
+            row.SYM_H,
+            row["SYM-H"],
+            row.sym_h_pred,
+            row.symh_pred
+        ];
+
+        for (const value of candidates) {
+            const numeric = Number(value);
+            if (Number.isFinite(numeric)) return numeric;
+        }
+
+        return null;
+    }
+
+    function getBzValue(row) {
+        if (!row) return null;
+
+        const candidates = [row.Bz, row.bz, row.bz_gsm];
+
+        for (const value of candidates) {
+            const numeric = Number(value);
+            if (Number.isFinite(numeric)) return numeric;
+        }
+
+        return null;
+    }
+
+    function buildSymhDatasets(data) {
+        const history = data.history || [];
+        const forecast = data.forecast || [];
+
+        const observedData = history
+            .map(row => ({
+                x: row.time,
+                y: getSymhValue(row)
+            }))
+            .filter(row => row.y !== null);
+
+        const forecastData = forecast
+            .map(row => ({
+                x: row.time,
+                y: getSymhValue(row)
+            }))
+            .filter(row => row.y !== null);
+
+        return [
+            {
+                label: "Observed SYM-H",
+                data: observedData,
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.25
+            },
+            {
+                label: "Forecast SYM-H",
+                data: forecastData,
+                borderWidth: 2,
+                pointRadius: 0,
+                borderDash: [8, 5],
+                tension: 0.25
+            }
+        ];
+    }
+
+    function drawSymhChart(data) {
+        const ctx = document
+            .getElementById("symhForecastChart")
+            .getContext("2d");
+
+        if (symhForecastChart) {
+            symhForecastChart.destroy();
+        }
+
+        symhForecastChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                datasets: buildSymhDatasets(data)
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                parsing: false,
+                interaction: {
+                    mode: "nearest",
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: "top"
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return "";
+                                return formatUTC(items[0].raw.x);
+                            },
+                            label: function(item) {
+                                return item.dataset.label + ": " +
+                                    Number(item.raw.y).toFixed(1) + " nT";
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: "time",
+                        time: {
+                            unit: "hour",
+                            tooltipFormat: "yyyy-MM-dd HH:mm"
+                        },
+                        title: {
+                            display: true,
+                            text: "Time [UTC]"
+                        }
+                    },
+                    y: {
+                        title: {
+                            display: true,
+                            text: "SYM-H [nT]"
+                        },
+                        grid: {
+                            color: "#d0d0d0"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async function loadSymhForecast() {
+        const statusEl = document.getElementById("symhStatus");
+
+        try {
+            statusEl.className = "";
+            statusEl.textContent = "Loading forecast data...";
+
+            const response = await fetch(
+                "data/symh_forecast.json?cache_bust=" + Date.now()
+            );
+
+            if (!response.ok) {
+                throw new Error("Could not load data/symh_forecast.json");
+            }
+
+            const data = await response.json();
+            const history = data.history || [];
+            const latest = history.length ? history[history.length - 1] : null;
+
+            const triggerActive = Boolean(data.trigger_active);
+            const statusText = data.status || (
+                triggerActive ? "Forecast active" : "Standby"
+            );
+
+            statusEl.textContent = statusText;
+            statusEl.className = triggerActive ? "active" : "standby";
+
+            document.getElementById("symhCreatedTime").textContent =
+                formatUTC(data.created_utc);
+
+            document.getElementById("symhBaseTime").textContent =
+                formatUTC(data.forecast_base_time_utc);
+
+            const targetStart =
+                data.target_start_utc ||
+                (data.forecast && data.forecast[0]
+                    ? data.forecast[0].time
+                    : null);
+
+            const targetEnd =
+                data.target_end_utc ||
+                (data.forecast && data.forecast.length
+                    ? data.forecast[data.forecast.length - 1].time
+                    : null);
+
+            document.getElementById("symhPeriod").textContent =
+                targetStart && targetEnd
+                    ? formatUTC(targetStart) + " - " + formatUTC(targetEnd)
+                    : "-";
+
+            const latestBz = getBzValue(latest);
+            document.getElementById("symhLatestBz").textContent =
+                latestBz === null ? "-" : latestBz.toFixed(2) + " nT";
+
+            const latestSymh = getSymhValue(latest);
+            document.getElementById("symhLatestObserved").textContent =
+                latestSymh === null ? "-" : latestSymh.toFixed(1) + " nT";
+
+            document.getElementById("symhTrigger").textContent =
+                triggerActive ? "Active" : "Inactive";
+
+            document.getElementById("symhMessage").textContent =
+                data.message || data.status_detail || "-";
+
+            drawSymhChart(data);
+
+        } catch (error) {
+            console.error(error);
+            statusEl.className = "error";
+            statusEl.textContent =
+                "SYM-H forecast data are not available yet.";
+
+            document.getElementById("symhMessage").textContent =
+                "Check whether GitHub Actions created data/symh_forecast.json.";
+        }
+    }
+
+    loadElectronForecast();
+    loadSymhForecast();
 </script>
 
 </body>
