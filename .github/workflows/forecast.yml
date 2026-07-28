@@ -8,38 +8,44 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: forecast-dashboard-update
+  cancel-in-progress: false
+
 jobs:
   forecast:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
 
       - name: Install dependencies
         run: |
-          pip install "numpy<2" 
-          pip install pandas requests h5py 
-          pip install tensorflow==2.10.*
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" pandas requests h5py "tensorflow==2.10.*"
 
       - name: Run forecast script
         run: |
-          python scripts/run_forecast.py
+          python -u scripts/run_forecast.py
 
-      - name: Commit updated forecast files
+      - name: Commit updated data files
+        if: always()
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add data/forecast.json
-          git add data/input_latest_3days.csv
-          git add data/latest_inputs.json
+          git add -A data
 
-          git commit -m "Update forecast data" || echo "No changes"
-
-          git push
+          if git diff --cached --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "Update forecast data"
+            git pull --rebase
+            git push
+          fi
