@@ -1,12 +1,12 @@
 import json
-import re
+import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import requests
-import tensorflow as tf
 
 
 # ============================================================
@@ -22,6 +22,7 @@ DATA_DIR.mkdir(exist_ok=True)
 OUTPUT_FORECAST_JSON = DATA_DIR / "forecast.json"
 OUTPUT_INPUT_CSV = DATA_DIR / "input_latest_3days.csv"
 OUTPUT_INPUT_JSON = DATA_DIR / "latest_inputs.json"
+SOLAR_WIND_HISTORY_CSV = DATA_DIR / "solar_wind_hourly_history.csv"
 
 
 # ============================================================
@@ -29,12 +30,24 @@ OUTPUT_INPUT_JSON = DATA_DIR / "latest_inputs.json"
 # ============================================================
 
 URLS = {
-    "mag": "https://services.swpc.noaa.gov/products/solar-wind/mag-7-day.json",
-    "plasma": "https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json",
+    "mag": "https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json",
+    "wind": "https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json",
     "electron": "https://services.swpc.noaa.gov/json/goes/primary/integral-electrons-3-day.json",
     "kp": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
-    "dst": "https://wdc.kugi.kyoto-u.ac.jp/dst_realtime/presentmonth/index.html",
+    "dst": "https://services.swpc.noaa.gov/products/kyoto-dst.json",
 }
+
+
+# ============================================================
+# Configuration
+# ============================================================
+
+MODEL_INPUT_HOURS = 72
+MAX_INTERPOLATED_SOLAR_WIND_GAP_HOURS = 3
+REQUEST_TIMEOUT_SECONDS = 40
+REQUEST_ATTEMPTS = 3
+
+SOLAR_WIND_COLS = ["B", "Bz", "T", "N", "V"]
 
 
 # ============================================================
@@ -53,29 +66,49 @@ NORM = {
 
 
 # ============================================================
+# HTTP session
+# ============================================================
+
+HTTP = requests.Session()
+HTTP.headers.update(
+    {
+        "User-Agent": (
+            "Jihyeon-Son.github.io forecast dashboard "
+            "(https://github.com/Jihyeon-Son/Jihyeon-Son.github.io)"
+        )
+    }
+)
+
+
+# ============================================================
 # Utility
 # ============================================================
 
-def utc_now_floor_hour():
-    now = datetime.now(timezone.utc)
 
-    # Use the last fully completed hourly bin.
-    # Example:
-    # run at 07:30 UTC -> forecast_base_time = 06:00 UTC
-    # input last bin = 06:00-06:59 UTC
+def utc_now_floor_hour():
+    """Return the last fully completed UTC hourly bin."""
+    now = datetime.now(timezone.utc)
     return now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
 
 
 def fetch_json(url):
-    r = requests.get(url, timeout=40)
-    r.raise_for_status()
-    return r.json()
+    last_error = None
 
+    for attempt in range(1, REQUEST_ATTEMPTS + 1):
+        try:
+            response = HTTP.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
+            response.raise_for_status()
+            return response.json()
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            print(
+                f"[WARN] Request failed ({attempt}/{REQUEST_ATTEMPTS}) "
+                f"for {url}: {exc}"
+            )
+            if attempt < REQUEST_ATTEMPTS:
+                time.sleep(2 ** (attempt - 1))
 
-def fetch_text(url):
-    r = requests.get(url, timeout=40)
-    r.raise_for_status()
-    return r.text
+    raise RuntimeError(f"Failed to fetch JSON from {url}: {last_error}")
 
 
 def minmax(x, vmin, vmax):
@@ -83,99 +116,211 @@ def minmax(x, vmin, vmax):
     return (x - vmin) / (vmax - vmin)
 
 
-def swpc_table_to_df(data):
-    header = data[0]
-    rows = data[1:]
+def atomic_write_json(path, payload):
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(
+            payload,
+            f,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    tmp_path.replace(path)
 
-    df = pd.DataFrame(rows, columns=header)
+
+def atomic_write_csv(path, df):
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    df.to_csv(tmp_path, index=False)
+    tmp_path.replace(path)
+
+
+def swpc_payload_to_df(data):
+    """Parse both SWPC list-of-objects and legacy table-style JSON."""
+    if not isinstance(data, list) or len(data) == 0:
+        raise ValueError("SWPC response is not a non-empty JSON list")
+
+    if isinstance(data[0], dict):
+        df = pd.DataFrame(data)
+    elif isinstance(data[0], list):
+        header = data[0]
+        rows = data[1:]
+        df = pd.DataFrame(rows, columns=header)
+    else:
+        raise ValueError("Unsupported SWPC JSON structure")
+
+    if df.empty:
+        raise ValueError("SWPC response contains no rows")
 
     time_col = "time_tag" if "time_tag" in df.columns else df.columns[0]
     df["time"] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
-    df = df.dropna(subset=["time"])
+    df = df.dropna(subset=["time"]).copy()
 
-    for col in df.columns:
-        if col != "time":
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if df.empty:
+        raise ValueError("SWPC response contains no valid timestamps")
 
     return df
+
+
+def first_existing_column(df, candidates):
+    for candidate in candidates:
+        if candidate in df.columns:
+            return candidate
+    return None
+
+
+def numeric_series(df, column):
+    values = pd.to_numeric(df[column], errors="coerce")
+    return values.mask(values <= -9990)
+
+
+def parse_bool(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+
+def select_active_rtsw_rows(df, label):
+    """Match the old products by retaining the spacecraft active at each time."""
+    out = df.copy()
+
+    if "active" in out.columns:
+        active_mask = out["active"].map(parse_bool)
+        if active_mask.any():
+            out = out.loc[active_mask].copy()
+        else:
+            print(f"[WARN] {label}: no rows are marked active; using all rows")
+
+    sort_columns = ["time"]
+    ascending = [True]
+
+    if "overall_quality" in out.columns:
+        out["_quality"] = numeric_series(out, "overall_quality")
+        sort_columns.append("_quality")
+        ascending.append(True)
+
+    if "sample_size" in out.columns:
+        out["_sample_size"] = numeric_series(out, "sample_size")
+        sort_columns.append("_sample_size")
+        ascending.append(False)
+
+    out = (
+        out.sort_values(sort_columns, ascending=ascending, na_position="last")
+        .drop_duplicates(subset=["time"], keep="first")
+        .sort_values("time")
+    )
+
+    if "source" in out.columns:
+        sources = sorted(out["source"].dropna().astype(str).unique().tolist())
+        if sources:
+            print(f"[INFO] {label} active source(s): {', '.join(sources)}")
+
+    return out
+
+
+def longest_false_run(mask):
+    longest = 0
+    current = 0
+
+    for value in mask:
+        if bool(value):
+            current = 0
+        else:
+            current += 1
+            longest = max(longest, current)
+
+    return longest
 
 
 # ============================================================
 # Load data
 # ============================================================
 
+
 def load_solar_wind_mag():
-    data = fetch_json(URLS["mag"])
-    df = swpc_table_to_df(data)
+    df = swpc_payload_to_df(fetch_json(URLS["mag"]))
+    df = select_active_rtsw_rows(df, "RTSW magnetometer")
 
-    rename_map = {
-        "bt": "B",
-        "bz_gsm": "Bz",
-    }
+    b_col = first_existing_column(df, ["bt", "B"])
+    bz_col = first_existing_column(df, ["bz_gsm", "Bz"])
 
-    df = df.rename(columns=rename_map)
+    if b_col is None or bz_col is None:
+        raise ValueError(
+            "RTSW magnetometer JSON does not contain both bt and bz_gsm"
+        )
 
-    needed = ["time", "B", "Bz"]
-    return df[[c for c in needed if c in df.columns]]
+    out = pd.DataFrame(
+        {
+            "time": df["time"],
+            "B": numeric_series(df, b_col),
+            "Bz": numeric_series(df, bz_col),
+        }
+    )
+
+    return out.dropna(subset=["B", "Bz"], how="all")
 
 
-def load_solar_wind_plasma():
-    data = fetch_json(URLS["plasma"])
-    df = swpc_table_to_df(data)
+def load_solar_wind_wind():
+    df = swpc_payload_to_df(fetch_json(URLS["wind"]))
+    df = select_active_rtsw_rows(df, "RTSW solar wind")
 
-    rename_map = {
-        "temperature": "T",
-        "density": "N",
-        "speed": "V",
-    }
+    temperature_col = first_existing_column(
+        df, ["proton_temperature", "temperature", "T"]
+    )
+    density_col = first_existing_column(df, ["proton_density", "density", "N"])
+    speed_col = first_existing_column(df, ["proton_speed", "speed", "V"])
 
-    df = df.rename(columns=rename_map)
+    if temperature_col is None or density_col is None or speed_col is None:
+        raise ValueError(
+            "RTSW wind JSON does not contain proton_temperature, "
+            "proton_density, and proton_speed"
+        )
 
-    needed = ["time", "T", "N", "V"]
-    return df[[c for c in needed if c in df.columns]]
+    out = pd.DataFrame(
+        {
+            "time": df["time"],
+            "T": numeric_series(df, temperature_col),
+            "N": numeric_series(df, density_col),
+            "V": numeric_series(df, speed_col),
+        }
+    )
+
+    return out.dropna(subset=["T", "N", "V"], how="all")
 
 
 def load_electron_flux():
     data = fetch_json(URLS["electron"])
-    df = pd.DataFrame(data)
+    df = swpc_payload_to_df(data)
 
-    if "time_tag" not in df.columns:
-        raise ValueError("electron flux JSON does not contain time_tag")
-
-    df["time"] = pd.to_datetime(df["time_tag"], utc=True, errors="coerce")
-    df = df.dropna(subset=["time"])
-
-    # Pick 2 MeV channel as flexibly as possible.
-    # Common NOAA fields include energy, flux, satellite, time_tag.
-    energy_cols = [c for c in df.columns if c.lower() in ["energy", "channel"]]
-
-    if energy_cols:
-        energy_col = energy_cols[0]
-        e = df[energy_col].astype(str).str.lower()
-
-        mask = (
-            e.str.contains("2", regex=False, na=False)
-            & (
-                e.str.contains("mev", regex=False, na=False)
-                | e.str.contains(">=", regex=False, na=False)
-                | e.str.contains(">", regex=False, na=False)
-            )
+    energy_col = first_existing_column(df, ["energy", "channel"])
+    if energy_col is not None:
+        energy = df[energy_col].astype(str).str.lower()
+        mask = energy.str.contains("2", regex=False, na=False) & energy.str.contains(
+            "mev", regex=False, na=False
         )
+        if mask.any():
+            df = df.loc[mask].copy()
 
-        if mask.sum() > 0:
-            df = df[mask]
-
-    flux_col = None
-    for candidate in ["flux", "electron_flux", "value"]:
-        if candidate in df.columns:
-            flux_col = candidate
-            break
+    flux_col = first_existing_column(df, ["flux", "electron_flux", "value"])
 
     if flux_col is None:
+        excluded = {
+            "time",
+            "time_tag",
+            "satellite",
+            "energy",
+            "channel",
+            "active",
+            "source",
+        }
         numeric_candidates = []
-        for c in df.columns:
-            if c not in ["time", "time_tag", "satellite", "energy", "channel"]:
-                numeric_candidates.append(c)
+        for column in df.columns:
+            if column in excluded:
+                continue
+            converted = pd.to_numeric(df[column], errors="coerce")
+            if converted.notna().any():
+                numeric_candidates.append(column)
+
         if not numeric_candidates:
             raise ValueError("Could not find electron flux column")
         flux_col = numeric_candidates[0]
@@ -183,192 +328,286 @@ def load_electron_flux():
     df["electron_flux"] = pd.to_numeric(df[flux_col], errors="coerce")
     df = df.dropna(subset=["electron_flux"])
 
-    return df[["time", "electron_flux"]]
+    return (
+        df[["time", "electron_flux"]]
+        .groupby("time", as_index=False)
+        .mean(numeric_only=True)
+        .sort_values("time")
+    )
 
 
 def load_kp():
-    data = fetch_json(URLS["kp"])
-    df = swpc_table_to_df(data)
+    df = swpc_payload_to_df(fetch_json(URLS["kp"]))
 
-    kp_col = None
-    for candidate in ["kp_index", "estimated_kp", "Kp", "kp"]:
-        if candidate in df.columns:
-            kp_col = candidate
-            break
-
+    kp_col = first_existing_column(
+        df, ["Kp", "kp", "kp_index", "estimated_kp"]
+    )
     if kp_col is None:
-        numeric_cols = [c for c in df.columns if c != "time"]
-        if not numeric_cols:
-            raise ValueError("Could not find Kp column")
-        kp_col = numeric_cols[0]
+        raise ValueError("Could not find Kp column")
 
     df["Kp"] = pd.to_numeric(df[kp_col], errors="coerce")
     df = df.dropna(subset=["Kp"])
 
-    return df[["time", "Kp"]]
+    return (
+        df[["time", "Kp"]]
+        .drop_duplicates(subset=["time"], keep="last")
+        .sort_values("time")
+    )
 
 
-def parse_kyoto_dst_presentmonth(html, reference_time):
+def load_dst():
+    df = swpc_payload_to_df(fetch_json(URLS["dst"]))
 
-    year = reference_time.year
-    month = reference_time.month
+    dst_col = first_existing_column(df, ["dst", "Dst"])
+    if dst_col is None:
+        raise ValueError("Could not find Dst column")
 
-    text = re.sub(r"<[^>]+>", " ", html)
+    df["Dst"] = pd.to_numeric(df[dst_col], errors="coerce")
+    df.loc[df["Dst"].abs() > 1000, "Dst"] = np.nan
+    df = df.dropna(subset=["Dst"])
 
-    lines = text.splitlines()
+    return (
+        df[["time", "Dst"]]
+        .drop_duplicates(subset=["time"], keep="last")
+        .sort_values("time")
+    )
 
-    records = []
 
-    for line in lines:
-
-        # DAY line만
-        m = re.match(r"^\s*(\d{1,2})\s+", line)
-
-        if not m:
-            continue
-
-        day = int(m.group(1))
-
-        # day 이후 문자열
-        rest = line[m.end():]
-
-        # fixed width parsing
-        # Kyoto Dst는 대략 4-char width
-        chunks = []
-
-        width = 4
-
-        for i in range(0, len(rest), width):
-            chunk = rest[i:i+width].strip()
-            chunks.append(chunk)
-
-        values = []
-
-        for chunk in chunks[:24]:
-
-            if chunk == "":
-                values.append(np.nan)
-                continue
-
-            # pure missing sentinel
-            if chunk == "9999":
-                values.append(np.nan)
-                continue
-
-            try:
-                val = float(chunk)
-
-                # impossible dst
-                if abs(val) > 1000:
-                    val = np.nan
-
-                values.append(val)
-
-            except Exception:
-                values.append(np.nan)
-
-        for hour, val in enumerate(values):
-
-            try:
-                t = datetime(
-                    year,
-                    month,
-                    day,
-                    hour,
-                    tzinfo=timezone.utc
-                )
-
-            except ValueError:
-                continue
-
-            records.append({
-                "time": t,
-                "Dst": val
-            })
-
-    return pd.DataFrame(records)
-
-def load_dst(reference_time):
-    try:
-        html = fetch_text(URLS["dst"])
-        df = parse_kyoto_dst_presentmonth(html, reference_time)
-        if not df.empty:
-            return df[["time", "Dst"]]
-    except Exception as exc:
-        print(f"[WARN] Failed to load Kyoto Dst: {exc}")
-
-    return pd.DataFrame(columns=["time", "Dst"])
-    
 # ============================================================
-# Hourly preprocessing
+# Solar-wind history
 # ============================================================
+
 
 def hourly_mean(df, value_cols):
-    if df.empty:
+    present_cols = [column for column in value_cols if column in df.columns]
+
+    if df.empty or not present_cols:
         return pd.DataFrame(columns=["time"] + value_cols)
 
     out = (
         df.sort_values("time")
-        .set_index("time")
+        .set_index("time")[present_cols]
         .resample("1h")
-        .mean(numeric_only=True)
+        .mean()
         .reset_index()
     )
 
-    keep = ["time"] + [c for c in value_cols if c in out.columns]
-    return out[keep]
+    out = out.dropna(subset=present_cols, how="all")
+    return out[["time"] + present_cols]
 
 
-def build_hourly_input_dataframe():
-    """
-    Makes recent 72-hour input dataframe.
+def build_new_solar_wind_hourly(wall_forecast_time):
+    mag = hourly_mean(load_solar_wind_mag(), ["B", "Bz"])
+    wind = hourly_mean(load_solar_wind_wind(), ["T", "N", "V"])
 
-    If forecast_time is 2026-05-03 23:00 UTC,
-    input range is 2026-05-01 00:00 UTC through 2026-05-03 23:00 UTC.
+    new_data = pd.merge(mag, wind, on="time", how="outer")
 
-    For Kp24, we additionally need 23 hours before the model input start,
-    so Kp is loaded on a 96-hour grid first.
-    """
+    for column in SOLAR_WIND_COLS:
+        if column not in new_data.columns:
+            new_data[column] = np.nan
+        new_data[column] = pd.to_numeric(new_data[column], errors="coerce")
 
-    forecast_time = utc_now_floor_hour()
-    input_start = forecast_time - timedelta(hours=71)
-    
+    new_data = new_data[new_data["time"] <= wall_forecast_time].copy()
+    new_data = new_data.dropna(subset=SOLAR_WIND_COLS, how="any")
+    new_data = (
+        new_data[["time"] + SOLAR_WIND_COLS]
+        .sort_values("time")
+        .drop_duplicates(subset=["time"], keep="last")
+    )
+
+    if new_data.empty:
+        raise RuntimeError(
+            "The new RTSW files did not contain a complete hourly solar-wind bin"
+        )
+
+    return new_data
+
+
+def read_solar_wind_history():
+    if not SOLAR_WIND_HISTORY_CSV.exists():
+        return pd.DataFrame(columns=["time"] + SOLAR_WIND_COLS)
+
+    try:
+        history = pd.read_csv(SOLAR_WIND_HISTORY_CSV)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=["time"] + SOLAR_WIND_COLS)
+
+    if "time" not in history.columns:
+        print("[WARN] Existing solar-wind history has no time column; resetting it")
+        return pd.DataFrame(columns=["time"] + SOLAR_WIND_COLS)
+
+    history["time"] = pd.to_datetime(history["time"], utc=True, errors="coerce")
+    history = history.dropna(subset=["time"]).copy()
+
+    for column in SOLAR_WIND_COLS:
+        if column not in history.columns:
+            history[column] = np.nan
+        history[column] = pd.to_numeric(history[column], errors="coerce")
+
+    return history[["time"] + SOLAR_WIND_COLS]
+
+
+def update_solar_wind_history(new_data, wall_forecast_time):
+    old_data = read_solar_wind_history()
+
+    old_data = old_data.copy()
+    new_data = new_data.copy()
+    old_data["_priority"] = 0
+    new_data["_priority"] = 1
+
+    frames = [frame for frame in [old_data, new_data] if not frame.empty]
+    combined = pd.concat(frames, ignore_index=True)
+    combined = combined[combined["time"] <= wall_forecast_time].copy()
+
+    # Prefer newly downloaded values for an hour while retaining old history.
+    combined = (
+        combined.sort_values(["time", "_priority"], kind="stable")
+        .groupby("time", as_index=False)[SOLAR_WIND_COLS]
+        .last()
+    )
+    combined = combined.dropna(subset=SOLAR_WIND_COLS, how="any")
+
+    if combined.empty:
+        raise RuntimeError("Solar-wind history is empty after merging new data")
+
+    forecast_time = combined["time"].max()
+    retention_start = forecast_time - timedelta(hours=MODEL_INPUT_HOURS - 1)
+
+    combined = combined[
+        (combined["time"] >= retention_start)
+        & (combined["time"] <= forecast_time)
+    ].copy()
+    combined = combined.sort_values("time").reset_index(drop=True)
+
+    atomic_write_csv(SOLAR_WIND_HISTORY_CSV, combined)
+
+    return combined, forecast_time
+
+
+def prepare_solar_wind_window(history, forecast_time):
+    input_start = forecast_time - timedelta(hours=MODEL_INPUT_HOURS - 1)
+    grid = pd.DataFrame(
+        {
+            "time": pd.date_range(
+                start=input_start,
+                end=forecast_time,
+                freq="1h",
+            )
+        }
+    )
+
+    window = pd.merge(grid, history, on="time", how="left")
+    complete_mask = window[SOLAR_WIND_COLS].notna().all(axis=1)
+
+    available_hours = int(complete_mask.sum())
+    max_missing_run = longest_false_run(complete_mask.tolist())
+    edges_present = bool(complete_mask.iloc[0] and complete_mask.iloc[-1])
+
+    ready = (
+        edges_present
+        and max_missing_run <= MAX_INTERPOLATED_SOLAR_WIND_GAP_HOURS
+    )
+
+    if ready:
+        window[SOLAR_WIND_COLS] = window[SOLAR_WIND_COLS].interpolate(
+            method="linear",
+            limit_direction="both",
+        )
+        ready = not window[SOLAR_WIND_COLS].isna().any().any()
+
+    metrics = {
+        "ready": bool(ready),
+        "available_hours": available_hours,
+        "required_hours": MODEL_INPUT_HOURS,
+        "max_missing_run_hours": int(max_missing_run),
+        "history_start_utc": (
+            history["time"].min().isoformat() if not history.empty else None
+        ),
+        "history_end_utc": (
+            history["time"].max().isoformat() if not history.empty else None
+        ),
+    }
+
+    return window, metrics
+
+
+def collect_solar_wind_history():
+    wall_forecast_time = utc_now_floor_hour()
+
+    print(f"[INFO] Last completed wall-clock hour: {wall_forecast_time.isoformat()}")
+    print("[INFO] Fetching current NOAA RTSW one-day files...")
+
+    new_data = build_new_solar_wind_hourly(wall_forecast_time)
+    print(
+        "[INFO] Complete hourly bins in current RTSW download: "
+        f"{len(new_data)}"
+    )
+
+    history, forecast_time = update_solar_wind_history(
+        new_data,
+        wall_forecast_time,
+    )
+    window, metrics = prepare_solar_wind_window(history, forecast_time)
+
+    print(
+        "[INFO] Solar-wind history coverage: "
+        f"{metrics['available_hours']}/{metrics['required_hours']} hours"
+    )
+    print(f"[INFO] History file: {SOLAR_WIND_HISTORY_CSV}")
+
+    return window, forecast_time, metrics
+
+
+# ============================================================
+# Hourly model input preprocessing
+# ============================================================
+
+
+def build_hourly_input_dataframe(solar_wind_window, forecast_time):
+    input_start = forecast_time - timedelta(hours=MODEL_INPUT_HOURS - 1)
     kp_start = input_start - timedelta(hours=23)
 
-    # Kp24 계산을 위해 96시간 grid 생성
-    hourly_grid = pd.DataFrame({
-        "time": pd.date_range(
-            kp_start,
-            forecast_time,
-            freq="1h",
-            tz="UTC",
-        )
-    })
+    hourly_grid = pd.DataFrame(
+        {
+            "time": pd.date_range(
+                start=kp_start,
+                end=forecast_time,
+                freq="1h",
+            )
+        }
+    )
 
-    mag = hourly_mean(load_solar_wind_mag(), ["B", "Bz"])
-    plasma = hourly_mean(load_solar_wind_plasma(), ["T", "N", "V"])
     electron = hourly_mean(load_electron_flux(), ["electron_flux"])
     kp = hourly_mean(load_kp(), ["Kp"])
-    dst = hourly_mean(load_dst(forecast_time), ["Dst"])
+    dst = hourly_mean(load_dst(), ["Dst"])
 
     df = hourly_grid.copy()
 
-    for source in [mag, plasma, electron, kp, dst]:
+    for source in [solar_wind_window, electron, kp, dst]:
         if source.empty:
             continue
         df = pd.merge(df, source, on="time", how="left")
 
-    required_cols = ["B", "Bz", "T", "N", "V", "electron_flux", "Kp", "Dst"]
+    required_cols = [
+        "B",
+        "Bz",
+        "T",
+        "N",
+        "V",
+        "electron_flux",
+        "Kp",
+        "Dst",
+    ]
 
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = np.nan
+    for column in required_cols:
+        if column not in df.columns:
+            df[column] = np.nan
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    # Missing-data handling
+    # Preserve the original missing-data policy for non-RTSW products.
     df[required_cols] = df[required_cols].interpolate(limit_direction="both")
     df[required_cols] = df[required_cols].ffill().bfill()
 
-    # If a whole column is still NaN, use conservative fallback.
     fallback = {
         "B": 5.0,
         "Bz": 0.0,
@@ -380,33 +619,41 @@ def build_hourly_input_dataframe():
         "Dst": 0.0,
     }
 
-    for col, value in fallback.items():
-        df[col] = df[col].fillna(value)
+    for column, value in fallback.items():
+        df[column] = df[column].fillna(value)
 
-    # Electron flux must be positive before log10
     df["electron_flux"] = df["electron_flux"].clip(lower=1e-30)
 
-    # Kp rolling 24-hour sum.
-    # At each hourly timestamp, Kp24 means sum over previous 24 hourly Kp values including current hour.
-    df["Kp24"] = (
-        df["Kp"]
-        .rolling(window=24, min_periods=24)
-        .sum()
-    )
+    df["Kp24"] = df["Kp"].rolling(window=24, min_periods=24).sum()
     df["Kp24"] = df["Kp24"].interpolate(limit_direction="both").ffill().bfill()
-    df_model = df[df["time"] >= input_start].copy()
-    
-    if len(df_model) != 72:
-        raise ValueError(f"Expected 72 rows for model input, got {len(df_model)}")
-        
-    return df_model, forecast_time
+
+    df_model = df[
+        (df["time"] >= input_start) & (df["time"] <= forecast_time)
+    ].copy()
+    df_model = df_model.reset_index(drop=True)
+
+    if len(df_model) != MODEL_INPUT_HOURS:
+        raise ValueError(
+            f"Expected {MODEL_INPUT_HOURS} rows for model input, "
+            f"got {len(df_model)}"
+        )
+
+    numeric_check_cols = required_cols + ["Kp24"]
+    if not np.isfinite(df_model[numeric_check_cols].to_numpy(dtype=float)).all():
+        raise ValueError("Model input contains non-finite values")
+
+    return df_model
 
 
 # ============================================================
 # Model handling
 # ============================================================
 
+
 def load_model():
+    # TensorFlow is imported only when 72 hours have accumulated.
+    import tensorflow as tf
+
     with open(MODEL_JSON, "r", encoding="utf-8") as f:
         model_json = f.read()
 
@@ -417,18 +664,10 @@ def load_model():
 
 
 def make_model_inputs(df):
-    """
-    Model input assumed from your saved model traceback:
-
-    input_1: 504 = 72 hours x 7 variables
-             [B, Bz, T, N, V, Kp24, Dst], flattened
-
-    input_2: 72 = electron flux history
-             log10(electron_flux) / 7
-    """
-
-    if len(df) != 72:
-        raise ValueError(f"Input dataframe must have 72 rows, got {len(df)}")
+    if len(df) != MODEL_INPUT_HOURS:
+        raise ValueError(
+            f"Input dataframe must have {MODEL_INPUT_HOURS} rows, got {len(df)}"
+        )
 
     B = minmax(df["B"].values, *NORM["B"])
     Bz = minmax(df["Bz"].values, *NORM["Bz"])
@@ -448,8 +687,7 @@ def make_model_inputs(df):
     raw_flux = df["electron_flux"].astype(float).values
     raw_flux = np.clip(raw_flux, 4, None)
     log_flux = np.log10(raw_flux)
-    x_eflux = (log_flux / 7.0).astype(np.float32)
-    x_eflux = x_eflux.reshape(1, 72)
+    x_eflux = (log_flux / 7.0).astype(np.float32).reshape(1, 72)
 
     return [x_features, x_eflux]
 
@@ -461,8 +699,6 @@ def run_prediction(model, model_inputs):
         pred = pred[0]
 
     pred = np.asarray(pred).reshape(-1)
-
-    # Model output is log10(flux) / 7
     pred_flux = 10 ** (pred * 7.0)
 
     return pred, pred_flux
@@ -472,8 +708,9 @@ def run_prediction(model, model_inputs):
 # Save outputs
 # ============================================================
 
+
 def save_latest_inputs(df, forecast_time):
-    df.to_csv(OUTPUT_INPUT_CSV, index=False)
+    atomic_write_csv(OUTPUT_INPUT_CSV, df)
 
     payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
@@ -482,26 +719,25 @@ def save_latest_inputs(df, forecast_time):
         "columns": list(df.columns),
         "data": [
             {
-                c: (
-                    row[c].isoformat()
-                    if c == "time"
-                    else None if pd.isna(row[c])
-                    else float(row[c])
+                column: (
+                    row[column].isoformat()
+                    if column == "time"
+                    else None
+                    if pd.isna(row[column])
+                    else float(row[column])
                 )
-                for c in df.columns
+                for column in df.columns
             }
             for _, row in df.iterrows()
         ],
     }
 
-    with open(OUTPUT_INPUT_JSON, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    atomic_write_json(OUTPUT_INPUT_JSON, payload)
 
 
 def save_forecast_json(df, forecast_time, pred_norm, pred_flux):
     forecast_times = [
-        forecast_time + timedelta(hours=i + 1)
-        for i in range(len(pred_flux))
+        forecast_time + timedelta(hours=i + 1) for i in range(len(pred_flux))
     ]
 
     payload = {
@@ -512,7 +748,12 @@ def save_forecast_json(df, forecast_time, pred_norm, pred_flux):
         "target_start_utc": forecast_times[0].isoformat(),
         "target_end_utc": forecast_times[-1].isoformat(),
         "status": "Forecast is current.",
-        "model_note": "Input uses 72 hourly values. Electron flux input is log10(flux)/7. Kp input is rolling 24-hour sum. Output is restored by 10**(prediction*7).",
+        "model_note": (
+            "Input uses 72 hourly values. Electron flux input is "
+            "log10(flux)/7. Kp input is a rolling 24-hour sum. "
+            "Output is restored by 10**(prediction*7). Solar-wind "
+            "history is retained locally from NOAA RTSW one-day files."
+        ),
         "history": [
             {
                 "time": row["time"].isoformat(),
@@ -530,25 +771,87 @@ def save_forecast_json(df, forecast_time, pred_norm, pred_flux):
         ],
         "forecast": [
             {
-                "time": t.isoformat(),
+                "time": forecast_time_item.isoformat(),
                 "electron_flux_pred_norm": float(y_norm),
                 "electron_flux_pred": float(y_flux),
             }
-            for t, y_norm, y_flux in zip(forecast_times, pred_norm, pred_flux)
+            for forecast_time_item, y_norm, y_flux in zip(
+                forecast_times,
+                pred_norm,
+                pred_flux,
+            )
         ],
     }
 
-    with open(OUTPUT_FORECAST_JSON, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    atomic_write_json(OUTPUT_FORECAST_JSON, payload)
+
+
+def save_waiting_forecast_json(forecast_time, metrics):
+    available = metrics["available_hours"]
+    required = metrics["required_hours"]
+
+    payload = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "forecast_base_time_utc": forecast_time.isoformat(),
+        "input_start_utc": None,
+        "input_end_utc": metrics["history_end_utc"],
+        "target_start_utc": None,
+        "target_end_utc": None,
+        "status": (
+            "Collecting NOAA RTSW solar-wind history: "
+            f"{available}/{required} complete hourly bins available. "
+            "Forecast will resume automatically."
+        ),
+        "model_note": (
+            "NOAA retired the legacy 3-day and 7-day solar-wind files. "
+            "This dashboard now retains hourly values from the RTSW "
+            "one-day files until a 72-hour input window is available."
+        ),
+        "solar_wind_history": metrics,
+        "history": [],
+        "forecast": [],
+    }
+
+    atomic_write_json(OUTPUT_FORECAST_JSON, payload)
+
+
+def save_error_forecast_json(exc):
+    payload = {
+        "created_utc": datetime.now(timezone.utc).isoformat(),
+        "forecast_base_time_utc": None,
+        "input_start_utc": None,
+        "input_end_utc": None,
+        "target_start_utc": None,
+        "target_end_utc": None,
+        "status": f"Forecast update failed: {type(exc).__name__}: {exc}",
+        "history": [],
+        "forecast": [],
+    }
+
+    atomic_write_json(OUTPUT_FORECAST_JSON, payload)
 
 
 # ============================================================
 # Main
 # ============================================================
 
+
 def main():
-    print("[INFO] Building latest 72-hour input dataframe...")
-    df, forecast_time = build_hourly_input_dataframe()
+    print("[INFO] Updating retained 72-hour solar-wind history...")
+    solar_wind_window, forecast_time, metrics = collect_solar_wind_history()
+
+    if not metrics["ready"]:
+        print(
+            "[WAIT] Solar-wind history is not ready: "
+            f"{metrics['available_hours']}/{metrics['required_hours']} hours, "
+            f"maximum missing run {metrics['max_missing_run_hours']} hours."
+        )
+        save_waiting_forecast_json(forecast_time, metrics)
+        print("[DONE] History saved. Prediction was intentionally skipped.")
+        return
+
+    print("[INFO] Building latest 72-hour model input dataframe...")
+    df = build_hourly_input_dataframe(solar_wind_window, forecast_time)
 
     print("[INFO] Saving latest input files...")
     save_latest_inputs(df, forecast_time)
@@ -574,4 +877,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        traceback.print_exc()
+        try:
+            save_error_forecast_json(error)
+        except Exception:
+            traceback.print_exc()
+        raise
