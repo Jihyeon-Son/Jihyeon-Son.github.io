@@ -1,40 +1,16 @@
 {
-  "created_utc": "2026-08-02T11:24:32.764320+00:00",
-  "forecast_base_time_utc": "2026-08-02T10:00:00+00:00",
-  "input_start_utc": "2026-07-30T11:00:00+00:00",
-  "input_end_utc": "2026-08-02T10:00:00+00:00",
-  "target_start_utc": "2026-08-02T11:00:00+00:00",
-  "target_end_utc": "2026-08-05T10:00:00+00:00",
+  "created_utc": "2026-08-02T13:47:12.220756+00:00",
+  "forecast_base_time_utc": "2026-08-02T12:00:00+00:00",
+  "input_start_utc": "2026-07-30T13:00:00+00:00",
+  "input_end_utc": "2026-08-02T12:00:00+00:00",
+  "target_start_utc": "2026-08-02T13:00:00+00:00",
+  "target_end_utc": "2026-08-05T12:00:00+00:00",
   "status": "Forecast is current.",
   "model_note": "Input uses 72 hourly values. Electron flux input is log10(flux)/7. Kp input is a rolling 24-hour sum. Output is restored by 10**(prediction*7). Solar-wind history is retained locally from NOAA RTSW one-day files.",
   "history": [
     {
-      "time": "2026-07-30T11:00:00+00:00",
-      "electron_flux": 397.2319532121931,
-      "B": 3.866833333333333,
-      "Bz": -1.594666666666667,
-      "T": 54719.63333333333,
-      "N": 2.9791666666666665,
-      "V": 328.44666666666666,
-      "Kp": 1.78,
-      "Kp24": 27.67,
-      "Dst": 2.0
-    },
-    {
-      "time": "2026-07-30T12:00:00+00:00",
-      "electron_flux": 505.92725880940753,
-      "B": 3.595,
-      "Bz": -1.9466666666666663,
-      "T": 70402.91666666667,
-      "N": 2.95,
-      "V": 329.8533333333333,
-      "Kp": 1.67,
-      "Kp24": 28.34,
-      "Dst": -4.0
-    },
-    {
       "time": "2026-07-30T13:00:00+00:00",
-      "electron_flux": 567.7149353027344,
+      "electron_flux": 633.5892944335938,
       "B": 3.1991379310344827,
       "Bz": -0.996896551724138,
       "T": 74313.4827586207,
@@ -611,11 +587,11 @@
     {
       "time": "2026-08-01T13:00:00+00:00",
       "electron_flux": 540.5379333496094,
-      "B": 3.4956666666666667,
-      "Bz": -2.2391666666666667,
-      "T": 41026.457627118645,
-      "N": 4.794406779661017,
-      "V": 279.2050847457627,
+      "B": 3.4092857142857147,
+      "Bz": -1.0107142857142857,
+      "T": 44078.21428571428,
+      "N": 4.393571428571429,
+      "V": 281.54285714285714,
       "Kp": 1.22,
       "Kp24": 26.093333333333334,
       "Dst": 6.0
@@ -870,369 +846,393 @@
       "V": 288.31666666666666,
       "Kp": 1.0,
       "Kp24": 23.78,
-      "Dst": 10.0
+      "Dst": 20.0
+    },
+    {
+      "time": "2026-08-02T11:00:00+00:00",
+      "electron_flux": 529.2660802205404,
+      "B": 9.2605,
+      "Bz": -3.4626666666666663,
+      "T": 132547.03333333333,
+      "N": 16.948833333333333,
+      "V": 317.93,
+      "Kp": 1.0,
+      "Kp24": 23.67,
+      "Dst": 18.0
+    },
+    {
+      "time": "2026-08-02T12:00:00+00:00",
+      "electron_flux": 613.0224227905273,
+      "B": 13.1495,
+      "Bz": 1.5208333333333333,
+      "T": 232328.85,
+      "N": 25.127666666666666,
+      "V": 360.5816666666667,
+      "Kp": 1.0,
+      "Kp24": 23.34,
+      "Dst": 26.0
     }
   ],
   "forecast": [
     {
-      "time": "2026-08-02T11:00:00+00:00",
-      "electron_flux_pred_norm": 0.38579460978507996,
-      "electron_flux_pred": 501.83648681640625
-    },
-    {
-      "time": "2026-08-02T12:00:00+00:00",
-      "electron_flux_pred_norm": 0.3923393189907074,
-      "electron_flux_pred": 557.66748046875
-    },
-    {
       "time": "2026-08-02T13:00:00+00:00",
-      "electron_flux_pred_norm": 0.4008690118789673,
-      "electron_flux_pred": 639.857421875
+      "electron_flux_pred_norm": 0.3811013102531433,
+      "electron_flux_pred": 465.27435302734375
     },
     {
       "time": "2026-08-02T14:00:00+00:00",
-      "electron_flux_pred_norm": 0.40328449010849,
-      "electron_flux_pred": 665.2599487304688
+      "electron_flux_pred_norm": 0.3645266890525818,
+      "electron_flux_pred": 356.1941223144531
     },
     {
       "time": "2026-08-02T15:00:00+00:00",
-      "electron_flux_pred_norm": 0.40846967697143555,
-      "electron_flux_pred": 723.2488403320312
+      "electron_flux_pred_norm": 0.3523063361644745,
+      "electron_flux_pred": 292.5124206542969
     },
     {
       "time": "2026-08-02T16:00:00+00:00",
-      "electron_flux_pred_norm": 0.41117092967033386,
-      "electron_flux_pred": 755.4338989257812
+      "electron_flux_pred_norm": 0.32233041524887085,
+      "electron_flux_pred": 180.43170166015625
     },
     {
       "time": "2026-08-02T17:00:00+00:00",
-      "electron_flux_pred_norm": 0.4022779166698456,
-      "electron_flux_pred": 654.5538330078125
+      "electron_flux_pred_norm": 0.31505313515663147,
+      "electron_flux_pred": 160.4618682861328
     },
     {
       "time": "2026-08-02T18:00:00+00:00",
-      "electron_flux_pred_norm": 0.39727064967155457,
-      "electron_flux_pred": 603.8019409179688
+      "electron_flux_pred_norm": 0.2854253947734833,
+      "electron_flux_pred": 99.53543853759766
     },
     {
       "time": "2026-08-02T19:00:00+00:00",
-      "electron_flux_pred_norm": 0.3854348659515381,
-      "electron_flux_pred": 498.93511962890625
+      "electron_flux_pred_norm": 0.270408570766449,
+      "electron_flux_pred": 78.1375732421875
     },
     {
       "time": "2026-08-02T20:00:00+00:00",
-      "electron_flux_pred_norm": 0.36990782618522644,
-      "electron_flux_pred": 388.4675598144531
+      "electron_flux_pred_norm": 0.24949687719345093,
+      "electron_flux_pred": 55.779945373535156
     },
     {
       "time": "2026-08-02T21:00:00+00:00",
-      "electron_flux_pred_norm": 0.35736367106437683,
-      "electron_flux_pred": 317.355224609375
+      "electron_flux_pred_norm": 0.2369719296693802,
+      "electron_flux_pred": 45.58305740356445
     },
     {
       "time": "2026-08-02T22:00:00+00:00",
-      "electron_flux_pred_norm": 0.3402944505214691,
-      "electron_flux_pred": 241.0245361328125
+      "electron_flux_pred_norm": 0.22437022626399994,
+      "electron_flux_pred": 37.20416259765625
     },
     {
       "time": "2026-08-02T23:00:00+00:00",
-      "electron_flux_pred_norm": 0.3223786950111389,
-      "electron_flux_pred": 180.5722198486328
+      "electron_flux_pred_norm": 0.20865245163440704,
+      "electron_flux_pred": 28.878000259399414
     },
     {
       "time": "2026-08-03T00:00:00+00:00",
-      "electron_flux_pred_norm": 0.3139749765396118,
-      "electron_flux_pred": 157.6975555419922
+      "electron_flux_pred_norm": 0.20119452476501465,
+      "electron_flux_pred": 25.607175827026367
     },
     {
       "time": "2026-08-03T01:00:00+00:00",
-      "electron_flux_pred_norm": 0.2993019223213196,
-      "electron_flux_pred": 124.48399353027344
+      "electron_flux_pred_norm": 0.18814001977443695,
+      "electron_flux_pred": 20.748184204101562
     },
     {
       "time": "2026-08-03T02:00:00+00:00",
-      "electron_flux_pred_norm": 0.2898840606212616,
-      "electron_flux_pred": 106.95187377929688
+      "electron_flux_pred_norm": 0.18693681061267853,
+      "electron_flux_pred": 20.349681854248047
     },
     {
       "time": "2026-08-03T03:00:00+00:00",
-      "electron_flux_pred_norm": 0.28028610348701477,
-      "electron_flux_pred": 91.62262725830078
+      "electron_flux_pred_norm": 0.186872661113739,
+      "electron_flux_pred": 20.328651428222656
     },
     {
       "time": "2026-08-03T04:00:00+00:00",
-      "electron_flux_pred_norm": 0.2737314999103546,
-      "electron_flux_pred": 82.43668365478516
+      "electron_flux_pred_norm": 0.18158920109272003,
+      "electron_flux_pred": 18.66914176940918
     },
     {
       "time": "2026-08-03T05:00:00+00:00",
-      "electron_flux_pred_norm": 0.2661241590976715,
-      "electron_flux_pred": 72.92377471923828
+      "electron_flux_pred_norm": 0.18082080781459808,
+      "electron_flux_pred": 18.439350128173828
     },
     {
       "time": "2026-08-03T06:00:00+00:00",
-      "electron_flux_pred_norm": 0.2735949456691742,
-      "electron_flux_pred": 82.25543212890625
+      "electron_flux_pred_norm": 0.18723845481872559,
+      "electron_flux_pred": 20.448863983154297
     },
     {
       "time": "2026-08-03T07:00:00+00:00",
-      "electron_flux_pred_norm": 0.27855950593948364,
-      "electron_flux_pred": 89.10797882080078
+      "electron_flux_pred_norm": 0.19553887844085693,
+      "electron_flux_pred": 23.3761043548584
     },
     {
       "time": "2026-08-03T08:00:00+00:00",
-      "electron_flux_pred_norm": 0.27923181653022766,
-      "electron_flux_pred": 90.0788345336914
+      "electron_flux_pred_norm": 0.20947182178497314,
+      "electron_flux_pred": 29.26191520690918
     },
     {
       "time": "2026-08-03T09:00:00+00:00",
-      "electron_flux_pred_norm": 0.28231894969940186,
-      "electron_flux_pred": 94.6744155883789
+      "electron_flux_pred_norm": 0.2167641818523407,
+      "electron_flux_pred": 32.911617279052734
     },
     {
       "time": "2026-08-03T10:00:00+00:00",
-      "electron_flux_pred_norm": 0.2899986803531647,
-      "electron_flux_pred": 107.14962768554688
+      "electron_flux_pred_norm": 0.2267526239156723,
+      "electron_flux_pred": 38.66057586669922
     },
     {
       "time": "2026-08-03T11:00:00+00:00",
-      "electron_flux_pred_norm": 0.28846731781959534,
-      "electron_flux_pred": 104.53726196289062
+      "electron_flux_pred_norm": 0.2363082617521286,
+      "electron_flux_pred": 45.098060607910156
     },
     {
       "time": "2026-08-03T12:00:00+00:00",
-      "electron_flux_pred_norm": 0.29759350419044495,
-      "electron_flux_pred": 121.10287475585938
+      "electron_flux_pred_norm": 0.25074902176856995,
+      "electron_flux_pred": 56.91715621948242
     },
     {
       "time": "2026-08-03T13:00:00+00:00",
-      "electron_flux_pred_norm": 0.30273154377937317,
-      "electron_flux_pred": 131.55908203125
+      "electron_flux_pred_norm": 0.2598865330219269,
+      "electron_flux_pred": 65.9486312866211
     },
     {
       "time": "2026-08-03T14:00:00+00:00",
-      "electron_flux_pred_norm": 0.30158883333206177,
-      "electron_flux_pred": 129.15817260742188
+      "electron_flux_pred_norm": 0.2609795928001404,
+      "electron_flux_pred": 67.12078857421875
     },
     {
       "time": "2026-08-03T15:00:00+00:00",
-      "electron_flux_pred_norm": 0.30461907386779785,
-      "electron_flux_pred": 135.623046875
+      "electron_flux_pred_norm": 0.27582287788391113,
+      "electron_flux_pred": 85.26290893554688
     },
     {
       "time": "2026-08-03T16:00:00+00:00",
-      "electron_flux_pred_norm": 0.3019651174545288,
-      "electron_flux_pred": 129.94384765625
+      "electron_flux_pred_norm": 0.2739095091819763,
+      "electron_flux_pred": 82.67353057861328
     },
     {
       "time": "2026-08-03T17:00:00+00:00",
-      "electron_flux_pred_norm": 0.29319053888320923,
-      "electron_flux_pred": 112.80642700195312
+      "electron_flux_pred_norm": 0.2845761477947235,
+      "electron_flux_pred": 98.18225860595703
     },
     {
       "time": "2026-08-03T18:00:00+00:00",
-      "electron_flux_pred_norm": 0.28648871183395386,
-      "electron_flux_pred": 101.25603485107422
+      "electron_flux_pred_norm": 0.2815864384174347,
+      "electron_flux_pred": 93.56320190429688
     },
     {
       "time": "2026-08-03T19:00:00+00:00",
-      "electron_flux_pred_norm": 0.2775918245315552,
-      "electron_flux_pred": 87.72891998291016
+      "electron_flux_pred_norm": 0.2782483994960785,
+      "electron_flux_pred": 88.6622543334961
     },
     {
       "time": "2026-08-03T20:00:00+00:00",
-      "electron_flux_pred_norm": 0.2698306441307068,
-      "electron_flux_pred": 77.41310119628906
+      "electron_flux_pred_norm": 0.2703317701816559,
+      "electron_flux_pred": 78.04092407226562
     },
     {
       "time": "2026-08-03T21:00:00+00:00",
-      "electron_flux_pred_norm": 0.2576337158679962,
-      "electron_flux_pred": 63.5969123840332
+      "electron_flux_pred_norm": 0.2674620449542999,
+      "electron_flux_pred": 74.51338958740234
     },
     {
       "time": "2026-08-03T22:00:00+00:00",
-      "electron_flux_pred_norm": 0.24597303569316864,
-      "electron_flux_pred": 52.70008087158203
+      "electron_flux_pred_norm": 0.25871938467025757,
+      "electron_flux_pred": 64.71957397460938
     },
     {
       "time": "2026-08-03T23:00:00+00:00",
-      "electron_flux_pred_norm": 0.229831263422966,
-      "electron_flux_pred": 40.62738800048828
+      "electron_flux_pred_norm": 0.25187811255455017,
+      "electron_flux_pred": 57.96245193481445
     },
     {
       "time": "2026-08-04T00:00:00+00:00",
-      "electron_flux_pred_norm": 0.22783423960208893,
-      "electron_flux_pred": 39.340484619140625
+      "electron_flux_pred_norm": 0.2518008053302765,
+      "electron_flux_pred": 57.890281677246094
     },
     {
       "time": "2026-08-04T01:00:00+00:00",
-      "electron_flux_pred_norm": 0.21929246187210083,
-      "electron_flux_pred": 34.28050994873047
+      "electron_flux_pred_norm": 0.24726295471191406,
+      "electron_flux_pred": 53.80723571777344
     },
     {
       "time": "2026-08-04T02:00:00+00:00",
-      "electron_flux_pred_norm": 0.21242648363113403,
-      "electron_flux_pred": 30.689191818237305
+      "electron_flux_pred_norm": 0.24891433119773865,
+      "electron_flux_pred": 55.25865173339844
     },
     {
       "time": "2026-08-04T03:00:00+00:00",
-      "electron_flux_pred_norm": 0.21073369681835175,
-      "electron_flux_pred": 29.863170623779297
+      "electron_flux_pred_norm": 0.2499718815088272,
+      "electron_flux_pred": 56.20865249633789
     },
     {
       "time": "2026-08-04T04:00:00+00:00",
-      "electron_flux_pred_norm": 0.20707106590270996,
-      "electron_flux_pred": 28.151235580444336
+      "electron_flux_pred_norm": 0.2585253119468689,
+      "electron_flux_pred": 64.51744079589844
     },
     {
       "time": "2026-08-04T05:00:00+00:00",
-      "electron_flux_pred_norm": 0.20117443799972534,
-      "electron_flux_pred": 25.5988826751709
+      "electron_flux_pred_norm": 0.26298990845680237,
+      "electron_flux_pred": 69.33130645751953
     },
     {
       "time": "2026-08-04T06:00:00+00:00",
-      "electron_flux_pred_norm": 0.20518450438976288,
-      "electron_flux_pred": 27.30810546875
+      "electron_flux_pred_norm": 0.2715580463409424,
+      "electron_flux_pred": 79.59876251220703
     },
     {
       "time": "2026-08-04T07:00:00+00:00",
-      "electron_flux_pred_norm": 0.21116474270820618,
-      "electron_flux_pred": 30.07137107849121
+      "electron_flux_pred_norm": 0.2847396731376648,
+      "electron_flux_pred": 98.44137573242188
     },
     {
       "time": "2026-08-04T08:00:00+00:00",
-      "electron_flux_pred_norm": 0.21411582827568054,
-      "electron_flux_pred": 31.53630256652832
+      "electron_flux_pred_norm": 0.29414933919906616,
+      "electron_flux_pred": 114.56324768066406
     },
     {
       "time": "2026-08-04T09:00:00+00:00",
-      "electron_flux_pred_norm": 0.22067563235759735,
-      "electron_flux_pred": 35.0533447265625
+      "electron_flux_pred_norm": 0.3112943768501282,
+      "electron_flux_pred": 151.02911376953125
     },
     {
       "time": "2026-08-04T10:00:00+00:00",
-      "electron_flux_pred_norm": 0.224746435880661,
-      "electron_flux_pred": 37.43044662475586
+      "electron_flux_pred_norm": 0.33147498965263367,
+      "electron_flux_pred": 209.08596801757812
     },
     {
       "time": "2026-08-04T11:00:00+00:00",
-      "electron_flux_pred_norm": 0.22623063623905182,
-      "electron_flux_pred": 38.33667755126953
+      "electron_flux_pred_norm": 0.33558228611946106,
+      "electron_flux_pred": 223.39633178710938
     },
     {
       "time": "2026-08-04T12:00:00+00:00",
-      "electron_flux_pred_norm": 0.23061411082744598,
-      "electron_flux_pred": 41.143272399902344
+      "electron_flux_pred_norm": 0.34994229674339294,
+      "electron_flux_pred": 281.57635498046875
     },
     {
       "time": "2026-08-04T13:00:00+00:00",
-      "electron_flux_pred_norm": 0.2415655553340912,
-      "electron_flux_pred": 49.08613586425781
+      "electron_flux_pred_norm": 0.35313859581947327,
+      "electron_flux_pred": 296.46270751953125
     },
     {
       "time": "2026-08-04T14:00:00+00:00",
-      "electron_flux_pred_norm": 0.241173654794693,
-      "electron_flux_pred": 48.77705764770508
+      "electron_flux_pred_norm": 0.37004679441452026,
+      "electron_flux_pred": 389.3386535644531
     },
     {
       "time": "2026-08-04T15:00:00+00:00",
-      "electron_flux_pred_norm": 0.2483007162809372,
-      "electron_flux_pred": 54.7148323059082
+      "electron_flux_pred_norm": 0.3695504665374756,
+      "electron_flux_pred": 386.2364807128906
     },
     {
       "time": "2026-08-04T16:00:00+00:00",
-      "electron_flux_pred_norm": 0.24302993714809418,
-      "electron_flux_pred": 50.25850296020508
+      "electron_flux_pred_norm": 0.3705112636089325,
+      "electron_flux_pred": 392.26434326171875
     },
     {
       "time": "2026-08-04T17:00:00+00:00",
-      "electron_flux_pred_norm": 0.24024726450443268,
-      "electron_flux_pred": 48.05414581298828
+      "electron_flux_pred_norm": 0.3686416447162628,
+      "electron_flux_pred": 380.6199645996094
     },
     {
       "time": "2026-08-04T18:00:00+00:00",
-      "electron_flux_pred_norm": 0.2423255741596222,
-      "electron_flux_pred": 49.6911506652832
+      "electron_flux_pred_norm": 0.36649125814437866,
+      "electron_flux_pred": 367.6535339355469
     },
     {
       "time": "2026-08-04T19:00:00+00:00",
-      "electron_flux_pred_norm": 0.23699043691158295,
-      "electron_flux_pred": 45.59666061401367
+      "electron_flux_pred_norm": 0.3543223440647125,
+      "electron_flux_pred": 302.1734619140625
     },
     {
       "time": "2026-08-04T20:00:00+00:00",
-      "electron_flux_pred_norm": 0.22790440917015076,
-      "electron_flux_pred": 39.3849983215332
+      "electron_flux_pred_norm": 0.35130810737609863,
+      "electron_flux_pred": 287.8437194824219
     },
     {
       "time": "2026-08-04T21:00:00+00:00",
-      "electron_flux_pred_norm": 0.2219037413597107,
-      "electron_flux_pred": 35.75412368774414
+      "electron_flux_pred_norm": 0.3414156138896942,
+      "electron_flux_pred": 245.41961669921875
     },
     {
       "time": "2026-08-04T22:00:00+00:00",
-      "electron_flux_pred_norm": 0.21889305114746094,
-      "electron_flux_pred": 34.06052780151367
+      "electron_flux_pred_norm": 0.33554384112358093,
+      "electron_flux_pred": 223.25791931152344
     },
     {
       "time": "2026-08-04T23:00:00+00:00",
-      "electron_flux_pred_norm": 0.21008169651031494,
-      "electron_flux_pred": 29.550979614257812
+      "electron_flux_pred_norm": 0.3162780702114105,
+      "electron_flux_pred": 163.66151428222656
     },
     {
       "time": "2026-08-05T00:00:00+00:00",
-      "electron_flux_pred_norm": 0.20215030014514923,
-      "electron_flux_pred": 26.00471305847168
+      "electron_flux_pred_norm": 0.31906697154045105,
+      "electron_flux_pred": 171.18621826171875
     },
     {
       "time": "2026-08-05T01:00:00+00:00",
-      "electron_flux_pred_norm": 0.1952747404575348,
-      "electron_flux_pred": 23.276796340942383
+      "electron_flux_pred_norm": 0.3155045211315155,
+      "electron_flux_pred": 161.6335906982422
     },
     {
       "time": "2026-08-05T02:00:00+00:00",
-      "electron_flux_pred_norm": 0.19116590917110443,
-      "electron_flux_pred": 21.78519058227539
+      "electron_flux_pred_norm": 0.31020668148994446,
+      "electron_flux_pred": 148.40440368652344
     },
     {
       "time": "2026-08-05T03:00:00+00:00",
-      "electron_flux_pred_norm": 0.18678458034992218,
-      "electron_flux_pred": 20.29981231689453
+      "electron_flux_pred_norm": 0.30755162239074707,
+      "electron_flux_pred": 142.18748474121094
     },
     {
       "time": "2026-08-05T04:00:00+00:00",
-      "electron_flux_pred_norm": 0.18816447257995605,
-      "electron_flux_pred": 20.756364822387695
+      "electron_flux_pred_norm": 0.3170057535171509,
+      "electron_flux_pred": 165.59239196777344
     },
     {
       "time": "2026-08-05T05:00:00+00:00",
-      "electron_flux_pred_norm": 0.18716561794281006,
-      "electron_flux_pred": 20.42487144470215
+      "electron_flux_pred_norm": 0.32155340909957886,
+      "electron_flux_pred": 178.18609619140625
     },
     {
       "time": "2026-08-05T06:00:00+00:00",
-      "electron_flux_pred_norm": 0.1936350017786026,
-      "electron_flux_pred": 22.669660568237305
+      "electron_flux_pred_norm": 0.3283775746822357,
+      "electron_flux_pred": 198.90380859375
     },
     {
       "time": "2026-08-05T07:00:00+00:00",
-      "electron_flux_pred_norm": 0.19824878871440887,
-      "electron_flux_pred": 24.419769287109375
+      "electron_flux_pred_norm": 0.3387114405632019,
+      "electron_flux_pred": 234.95248413085938
     },
     {
       "time": "2026-08-05T08:00:00+00:00",
-      "electron_flux_pred_norm": 0.2043672800064087,
-      "electron_flux_pred": 26.950756072998047
+      "electron_flux_pred_norm": 0.3407386243343353,
+      "electron_flux_pred": 242.7562713623047
     },
     {
       "time": "2026-08-05T09:00:00+00:00",
-      "electron_flux_pred_norm": 0.2127000093460083,
-      "electron_flux_pred": 30.824785232543945
+      "electron_flux_pred_norm": 0.35127025842666626,
+      "electron_flux_pred": 287.668212890625
     },
     {
       "time": "2026-08-05T10:00:00+00:00",
-      "electron_flux_pred_norm": 0.2190255969762802,
-      "electron_flux_pred": 34.13336944580078
+      "electron_flux_pred_norm": 0.37018701434135437,
+      "electron_flux_pred": 390.2196044921875
+    },
+    {
+      "time": "2026-08-05T11:00:00+00:00",
+      "electron_flux_pred_norm": 0.38770148158073425,
+      "electron_flux_pred": 517.5
+    },
+    {
+      "time": "2026-08-05T12:00:00+00:00",
+      "electron_flux_pred_norm": 0.3907589316368103,
+      "electron_flux_pred": 543.6412963867188
     }
   ]
 }
