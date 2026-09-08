@@ -84,7 +84,9 @@ GAP_INTERP_LIMIT_H = 6
 MAX_IMG_OFFSET_H = 12.0    # fall back to earlier frames up to this far before nominal
 WAVES = ["0211", "0193"]   # channel order of the image tensor
 DN_SCALE = {"0193": 4.0, "0211": 1.0}
-AEC_LOW_FRACTION = 0.4     # skip frame if raw disk median < 40% of running median (AEC short exposure)
+NOMINAL_EXPTIME = {"0193": 2.0, "0211": 2.9}   # seconds; AEC flare frames are much shorter
+SHORT_EXPOSURE_FRACTION = 0.8                   # EXPTIME below this x nominal -> short exposure
+AEC_LOW_FRACTION = 0.7     # secondary guard: raw disk median < 70% of running median -> short exposure
 CACHE_KEEP_DAYS = 6
 FRAME_JPEG_QUALITY = 82
 ARCHIVE_KEEP_DAYS = 21
@@ -243,7 +245,8 @@ def read_manifest():
 def write_manifest(rows):
     rows = sorted(rows, key=lambda r: (r["wave"], r["frame_time"]))
     with open(MANIFEST_CSV, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["wave", "frame_time", "url", "raw_disk_median", "fetched_utc"])
+        w = csv.DictWriter(f, fieldnames=["wave", "frame_time", "url", "raw_disk_median", "exptime", "short_exposure", "fetched_utc"],
+                           extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
 
@@ -257,9 +260,20 @@ def frame_time_from_path(p):
     return pd.Timestamp(f"{m.group(1)} {m.group(2)[:2]}:{m.group(2)[2:4]}:{m.group(2)[4:]}")
 
 
+def is_short_exposure(hdr, wave, med, ref_median):
+    """AEC flare frames have EXPTIME well below nominal (AECTYPE != 0); ratio guard as backup."""
+    exptime = hdr.get("EXPTIME")
+    if exptime is not None and float(exptime) < SHORT_EXPOSURE_FRACTION * NOMINAL_EXPTIME[wave]:
+        return True
+    if hdr.get("AECTYPE") not in (None, 0):
+        return True
+    return ref_median is not None and med < AEC_LOW_FRACTION * ref_median
+
+
 def try_fetch_frame(t, wave, ref_median):
     """Download + preprocess the frame at hour t (NRT first, then definitive synoptic).
-    Returns (PIL image, url, raw median) or None. Skips AEC short-exposure files."""
+    Returns (PIL image, url, raw median, exptime, short_flag) or None.
+    Short-exposure (AEC) files are skipped in favour of the next file in the hour."""
     y, m, d, h = t.year, t.month, t.day, t.hour
     candidates = [JSOC_NRT_URL.format(y=y, m=m, d=d, h=h, mi=mi, wave=wave) for mi in (0, 3, 6, 9, 12)]
     candidates += [JSOC_SYN_URL.format(y=y, m=m, d=d, h=h, mi=mi, wave=wave) for mi in (0, 2, 4, 6, 8, 10)]
@@ -280,11 +294,14 @@ def try_fetch_frame(t, wave, ref_median):
         except Exception as exc:  # corrupt / partial file -> next candidate
             print(f"[WARN] cannot read {url}: {exc}")
             continue
-        if ref_median is not None and med < AEC_LOW_FRACTION * ref_median:
-            print(f"[INFO] {wave} {t}: low exposure (median {med:.1f} vs ref {ref_median:.1f}), trying next file")
-            skipped = (img, url, med)
+        h = dict(hdu.header)
+        exptime = float(h.get("EXPTIME", float("nan")))
+        if is_short_exposure(h, wave, med, ref_median):
+            print(f"[INFO] {wave} {t}: short exposure (EXPTIME {exptime:.2f}s, median {med:.1f}), trying next file")
+            if skipped is None:
+                skipped = (img, url, med, exptime, True)
             continue
-        return img, url, med
+        return img, url, med, exptime, False
     return skipped   # better a short-exposure frame than none
 
 
@@ -295,27 +312,45 @@ def ensure_frames(nominal_times):
     used = {}
     for wave in WAVES:
         (AIA_DIR / wave).mkdir(parents=True, exist_ok=True)
-        meds = [float(r["raw_disk_median"]) for r in manifest if r["wave"] == wave and r["raw_disk_median"]]
+        rows = {r["frame_time"]: r for r in manifest if r["wave"] == wave}
+        good_meds = [float(r["raw_disk_median"]) for r in rows.values()
+                     if r.get("raw_disk_median") and r.get("short_exposure", "0") != "1"]
         used[wave] = []
         for nominal in nominal_times:
             chosen = None
             for back in range(0, int(MAX_IMG_OFFSET_H) + 1):
                 t = nominal - pd.Timedelta(hours=back)
                 p = frame_path(wave, t)
+                ref = float(np.median(good_meds[-20:])) if good_meds else None
                 if p.exists():
-                    chosen = (t, p, float(back))
-                    break
-                ref = float(np.median(meds[-20:])) if meds else None
+                    row = rows.get(iso(t), {})
+                    med = float(row["raw_disk_median"]) if row.get("raw_disk_median") else None
+                    stale = (row.get("short_exposure", "0") == "1"
+                             or (med is not None and ref is not None and med < AEC_LOW_FRACTION * ref))
+                    if not stale:
+                        chosen = (t, p, float(back))
+                        break
+                    print(f"[INFO] {wave} {t}: cached frame is short-exposure, re-fetching")
+                    p.unlink()
+                    (FRAMES_DIR / (p.stem + ".jpg")).unlink(missing_ok=True)
+                    manifest = [r for r in manifest if not (r["wave"] == wave and r["frame_time"] == iso(t))]
+                    rows.pop(iso(t), None)
                 got = try_fetch_frame(t, wave, ref)
                 if got is None:
                     continue
-                img, url, med = got
+                img, url, med, exptime, short = got
+                if short and back < int(MAX_IMG_OFFSET_H):
+                    print(f"[INFO] {wave} {t}: only short-exposure files in this hour, trying the previous hour")
+                    continue
                 img.save(p)
-                meds.append(med)
-                manifest.append({"wave": wave, "frame_time": iso(t), "url": url,
-                                 "raw_disk_median": f"{med:.3f}", "fetched_utc": iso(utc_now())})
+                if not short:
+                    good_meds.append(med)
+                row = {"wave": wave, "frame_time": iso(t), "url": url, "raw_disk_median": f"{med:.3f}",
+                       "exptime": f"{exptime:.3f}", "short_exposure": "1" if short else "0", "fetched_utc": iso(utc_now())}
+                manifest.append(row)
+                rows[iso(t)] = row
                 chosen = (t, p, float(back))
-                print(f"[INFO] fetched {wave} {t} (offset {back}h) from {url}")
+                print(f"[INFO] fetched {wave} {t} (offset {back}h, EXPTIME {exptime:.2f}s{', SHORT' if short else ''}) from {url}")
                 break
             if chosen is None:
                 raise RuntimeError(f"no AIA {wave} frame within {MAX_IMG_OFFSET_H}h before {nominal}")
@@ -378,6 +413,11 @@ def prune_color_frames(t0):
             n += 1
     for p in DATA_DIR.glob("latest_aia*.jpg"):    # thumbnails from earlier versions
         p.unlink()
+    legacy = DATA_DIR / "aia"                      # frame cache committed by an earlier version
+    if legacy.is_dir():
+        import shutil
+        shutil.rmtree(legacy, ignore_errors=True)
+        print(f"[INFO] removed legacy cache directory {legacy}")
     if n:
         print(f"[INFO] pruned {n} colour frames older than {cutoff}")
 

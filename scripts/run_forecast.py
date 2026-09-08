@@ -44,8 +44,9 @@ URLS = {
 # ============================================================
 
 MODEL_INPUT_HOURS = 72
-# Past forecasts kept for the "previous forecast" overlay: only issues on the
-# 00/06/12/18 UTC grid are archived (file changes 4x/day, not hourly), 7 days retained.
+# Past forecasts kept for the "previous forecast" overlay: an issue is archived when
+# the newest archived issue is at least ARCHIVE_STEP_HOURS older (so at most ~4 per
+# day even though the workflow runs at irregular times), 7 days retained.
 ARCHIVE_STEP_HOURS = 6
 ARCHIVE_KEEP_DAYS = 7
 PREVIOUS_FORECAST_MIN_AGE_HOURS = 24
@@ -753,11 +754,18 @@ def load_forecast_archive():
 
 
 def update_forecast_archive(forecast_time, forecast_times, pred_flux):
-    """Store this issue (if on the archive grid) and drop entries older than ARCHIVE_KEEP_DAYS."""
+    """Store this issue (if the newest archived one is >= ARCHIVE_STEP_HOURS older) and
+    drop entries older than ARCHIVE_KEEP_DAYS."""
     archive = load_forecast_archive()
     base_iso = forecast_time.isoformat()
 
-    if forecast_time.hour % ARCHIVE_STEP_HOURS == 0:
+    newest = max(
+        (pd.to_datetime(item.get("forecast_base_time_utc"), utc=True, errors="coerce") for item in archive),
+        default=pd.NaT,
+    )
+    due = pd.isna(newest) or forecast_time - newest >= timedelta(hours=ARCHIVE_STEP_HOURS)
+
+    if due:
         archive = [item for item in archive if item.get("forecast_base_time_utc") != base_iso]
         archive.append(
             {
