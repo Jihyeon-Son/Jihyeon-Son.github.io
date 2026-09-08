@@ -14,12 +14,13 @@ Inputs (identical to leaderboard/predict_submission.py):
       -> log10 -> per-image min-max uint8 -> vertical flip -> (64px grayscale at inference)
     Frames are cached as 512px PNGs under .cache/sw72_aia/<wave>/ (kept out of git, restored
     by actions/cache) so each run only downloads the frames it does not have yet; frames
-    older than 6 days are pruned. 256px JPEG thumbnails of the newest frames go to data/sw72/.
+    older than 6 days are pruned. The 10 input frames of each channel are also written as
+    512px SDO-colour JPEGs to data/sw72/frames/ (north up) for the dashboard animation.
   - model: model/sw72_ace_v1_arch.json + model/sw72_ace_v1_weights.h5 (Keras, TF 2.10)
 Outputs (data/sw72/):
   forecast.json          current forecast + observed history + provenance (dashboard input)
   forecast_archive.json  past forecasts issued on the 6-hour grid (last 21 days)
-  latest_aia<wave>.jpg   thumbnails of the newest input frames (dashboard)
+  frames/AIA*_<wave>.jpg input frames in the standard AIA colour table (dashboard animation)
 """
 import argparse
 import csv
@@ -52,6 +53,7 @@ WEIGHTS_URL = ("https://github.com/Jihyeon-Son/Jihyeon-Son.github.io/releases/do
 DATA_DIR = Path("data/sw72")
 AIA_DIR = Path(os.environ.get("SW72_AIA_CACHE", ".cache/sw72_aia"))   # not committed
 MANIFEST_CSV = AIA_DIR / "manifest.csv"
+FRAMES_DIR = DATA_DIR / "frames"          # colour JPEGs shown on the dashboard (committed)
 OUTPUT_JSON = DATA_DIR / "forecast.json"
 ARCHIVE_JSON = DATA_DIR / "forecast_archive.json"
 
@@ -84,7 +86,7 @@ WAVES = ["0211", "0193"]   # channel order of the image tensor
 DN_SCALE = {"0193": 4.0, "0211": 1.0}
 AEC_LOW_FRACTION = 0.4     # skip frame if raw disk median < 40% of running median (AEC short exposure)
 CACHE_KEEP_DAYS = 6
-THUMB_SIZE = 256
+FRAME_JPEG_QUALITY = 82
 ARCHIVE_KEEP_DAYS = 21
 HISTORY_DAYS = 5
 PRED_CLIP = (200.0, 1100.0)
@@ -340,6 +342,46 @@ def load_frame_64(path):
     return np.array(Image.open(path).convert("L").resize((IMG_SIZE, IMG_SIZE)), dtype=np.float16) / np.float16(255.0)
 
 
+def aia_color_table(wave):
+    """SDO/AIA standard colour table (identical to sunpy's aia_color_table / IDL aia_lct)."""
+    c0 = np.arange(256, dtype=float)
+    c1 = np.sqrt(c0) * np.sqrt(255.0)
+    c2 = c0 ** 2 / 255.0
+    c3 = (c1 + c2 / 2.0) * 255.0 / (c1.max() + c2.max() / 2.0)
+    r, g, b = {"0193": (c1, c0, c2), "0211": (c1, c0, c3)}[wave]
+    return np.stack([r, g, b], axis=1).clip(0, 255).round().astype(np.uint8)
+
+
+def ensure_color_frames(used):
+    """Write a colour JPEG (north up) for every input frame; returns {wave: [paths]}."""
+    FRAMES_DIR.mkdir(parents=True, exist_ok=True)
+    out = {}
+    for wave in WAVES:
+        lut = aia_color_table(wave)
+        out[wave] = []
+        for t, p, _ in used[wave]:
+            jpg = FRAMES_DIR / (p.stem + ".jpg")
+            if not jpg.exists():
+                gray = np.array(Image.open(p).convert("L"))
+                rgb = Image.fromarray(lut[gray])
+                ImageOps.flip(rgb).save(jpg, quality=FRAME_JPEG_QUALITY, optimize=True)   # undo the model's vertical flip
+            out[wave].append(jpg)
+    return out
+
+
+def prune_color_frames(t0):
+    cutoff = t0 - pd.Timedelta(days=CACHE_KEEP_DAYS)
+    n = 0
+    for p in FRAMES_DIR.glob("AIA*.jpg"):
+        if frame_time_from_path(p) < cutoff:
+            p.unlink()
+            n += 1
+    for p in DATA_DIR.glob("latest_aia*.jpg"):    # thumbnails from earlier versions
+        p.unlink()
+    if n:
+        print(f"[INFO] pruned {n} colour frames older than {cutoff}")
+
+
 # ============================================================
 # Model
 # ============================================================
@@ -467,12 +509,10 @@ def run(t0):
             rec[f"aia{wave}_offset_h"] = off
         frames_out.append(rec)
     max_off = max(r[f"aia{w}_offset_h"] for r in frames_out for w in WAVES)
-    thumbs = {}
-    for wave in WAVES:
-        t, p, _ = used[wave][-1]
-        out = DATA_DIR / f"latest_aia{wave}.jpg"
-        Image.open(p).convert("L").resize((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS).save(out, quality=85)
-        thumbs[f"aia{wave}"] = out.as_posix()
+    color = ensure_color_frames(used)
+    for k in range(IMG_SEQ):
+        for wave in WAVES:
+            frames_out[k][f"aia{wave}_img"] = color[wave][k].as_posix()
     print(f"[INFO] images ready, max offset from nominal {max_off:.0f}h")
 
     # --- inference ---
@@ -531,7 +571,6 @@ def run(t0):
         "sw_fallback": sw_fallback or "",
         "max_image_offset_h": max_off,
         "input_bins": [{"time": iso(t), "speed": round(float(v), 1)} for t, v in zip(bin_times, sw_bins)],
-        "latest_images": thumbs,
         "latest_image_times": {f"aia{w}": iso(used[w][-1][0]) for w in WAVES},
         "frames": frames_out,
         "history": history,
@@ -543,6 +582,7 @@ def run(t0):
     }
     atomic_write_json(OUTPUT_JSON, payload)
     prune_cache(t0)
+    prune_color_frames(t0)
     print(f"[INFO] wrote {OUTPUT_JSON} ({len(forecast)} hourly values)")
 
 
