@@ -128,22 +128,46 @@
         .aia-row {
             display: flex;
             gap: 16px;
-            flex-wrap: wrap;
             margin-top: 18px;
         }
 
         .aia-card {
+            flex: 1 1 0;
+            min-width: 0;
             text-align: center;
             font-size: 13px;
             color: #555;
         }
 
         .aia-card img {
-            width: 220px;
-            height: 220px;
+            display: block;
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1 / 1;
             border-radius: 8px;
             background: #000;
-            transform: scaleY(-1); /* cached model frames are stored vertically flipped */
+        }
+
+        .aia-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .aia-controls input[type="range"] {
+            flex: 1 1 0;
+        }
+
+        .aia-btn {
+            padding: 5px 12px;
+            border: 1px solid #c9ccd3;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 13px;
         }
 
         .note {
@@ -244,15 +268,20 @@
             </div>
             <div class="aia-row">
                 <div class="aia-card">
-                    <img id="sw72Img211" alt="AIA 211 latest input frame">
+                    <img id="sw72Img211" alt="AIA 211 input frames">
                     <div>AIA 211 &Aring; &middot; <span id="sw72Img211Time">-</span></div>
                 </div>
                 <div class="aia-card">
-                    <img id="sw72Img193" alt="AIA 193 latest input frame">
+                    <img id="sw72Img193" alt="AIA 193 input frames">
                     <div>AIA 193 &Aring; &middot; <span id="sw72Img193Time">-</span></div>
                 </div>
             </div>
-            <p class="note">Newest of the 10 input frames (t0 &minus; 6 h). Frames are the model's preprocessed synoptic images (log-scaled, per-image normalised), not calibrated intensities.</p>
+            <div class="aia-controls">
+                <button class="aia-btn" id="sw72PlayBtn" onclick="toggleSw72Animation()">Pause</button>
+                <input type="range" id="sw72FrameSlider" min="0" max="9" value="0" step="1" oninput="showSw72Frame(Number(this.value), true)">
+                <span id="sw72FrameLabel">-</span>
+            </div>
+            <p class="note">The 10 input frames (t0 &minus; 114 h to t0 &minus; 6 h, 12 h step) in the standard SDO/AIA colour tables. Frames are the model's preprocessed synoptic images (log-scaled, per-image normalised), not calibrated intensities.</p>
         </div>
     </section>
 
@@ -808,6 +837,89 @@
         });
     }
 
+
+    // --- AIA input-frame animation (211 and 193 played in sync) ---
+    const sw72Anim = { frames: [], index: 0, timer: null, playing: true, t0: null };
+    const SW72_FRAME_MS = 600;
+    const SW72_LAST_FRAME_MS = 1500;
+
+    function showSw72Frame(index, manual) {
+        const frames = sw72Anim.frames;
+        if (!frames.length) return;
+        sw72Anim.index = ((index % frames.length) + frames.length) % frames.length;
+        const f = frames[sw72Anim.index];
+
+        document.getElementById("sw72Img211").src = f.aia0211_img;
+        document.getElementById("sw72Img193").src = f.aia0193_img;
+        document.getElementById("sw72Img211Time").textContent = formatUTC(f.aia0211_time);
+        document.getElementById("sw72Img193Time").textContent = formatUTC(f.aia0193_time);
+
+        const lagHours = sw72Anim.t0
+            ? Math.round((Date.parse(sw72Anim.t0) - Date.parse(f.nominal_time)) / 3.6e6)
+            : null;
+        document.getElementById("sw72FrameLabel").textContent =
+            "Frame " + (sw72Anim.index + 1) + "/" + frames.length +
+            (lagHours === null ? "" : " (t0 \u2212 " + lagHours + " h)");
+        document.getElementById("sw72FrameSlider").value = sw72Anim.index;
+
+        if (manual && sw72Anim.playing) {
+            toggleSw72Animation();
+        }
+    }
+
+    function stepSw72Animation() {
+        showSw72Frame(sw72Anim.index + 1, false);
+        const onLast = sw72Anim.index === sw72Anim.frames.length - 1;
+        sw72Anim.timer = setTimeout(stepSw72Animation, onLast ? SW72_LAST_FRAME_MS : SW72_FRAME_MS);
+    }
+
+    function toggleSw72Animation() {
+        sw72Anim.playing = !sw72Anim.playing;
+        document.getElementById("sw72PlayBtn").textContent = sw72Anim.playing ? "Pause" : "Play";
+        if (sw72Anim.timer) {
+            clearTimeout(sw72Anim.timer);
+            sw72Anim.timer = null;
+        }
+        if (sw72Anim.playing) {
+            sw72Anim.timer = setTimeout(stepSw72Animation, SW72_FRAME_MS);
+        }
+    }
+
+    function startSw72Animation(frames, t0) {
+        if (sw72Anim.timer) {
+            clearTimeout(sw72Anim.timer);
+            sw72Anim.timer = null;
+        }
+        const usable = frames.filter(f => f.aia0211_img && f.aia0193_img);
+        sw72Anim.frames = usable;
+        sw72Anim.t0 = t0;
+        sw72Anim.playing = true;
+        document.getElementById("sw72PlayBtn").textContent = "Pause";
+        document.getElementById("sw72FrameSlider").max = Math.max(usable.length - 1, 0);
+        if (!usable.length) {
+            document.getElementById("sw72FrameLabel").textContent = "No input frames available";
+            return;
+        }
+
+        // preload every frame, then start from the newest one
+        const cacheBust = "?cache_bust=" + Date.now();
+        let loaded = 0;
+        usable.forEach(f => {
+            ["aia0211_img", "aia0193_img"].forEach(key => {
+                f[key] = f[key] + cacheBust;
+                const img = new Image();
+                img.onload = img.onerror = () => {
+                    loaded += 1;
+                    if (loaded === usable.length * 2) {
+                        showSw72Frame(usable.length - 1, false);
+                        sw72Anim.timer = setTimeout(stepSw72Animation, SW72_LAST_FRAME_MS);
+                    }
+                };
+                img.src = f[key];
+            });
+        });
+    }
+
     async function loadSw72Forecast() {
         const statusEl = document.getElementById("sw72Status");
 
@@ -861,15 +973,7 @@
             document.getElementById("sw72Message").textContent =
                 (failed ? data.last_attempt_status + " " : "") + (data.message || "-");
 
-            const cacheBust = "?cache_bust=" + Date.now();
-            if (data.latest_images) {
-                document.getElementById("sw72Img211").src = data.latest_images.aia0211 + cacheBust;
-                document.getElementById("sw72Img193").src = data.latest_images.aia0193 + cacheBust;
-            }
-            if (data.latest_image_times) {
-                document.getElementById("sw72Img211Time").textContent = formatUTC(data.latest_image_times.aia0211);
-                document.getElementById("sw72Img193Time").textContent = formatUTC(data.latest_image_times.aia0193);
-            }
+            startSw72Animation(data.frames || [], data.forecast_base_time_utc);
 
             drawSw72Chart(data);
 
