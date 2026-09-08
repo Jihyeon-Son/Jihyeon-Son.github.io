@@ -2,7 +2,7 @@
 
 Runs from the repository root (same convention as scripts/run_forecast.py).
 
-Issue time t0 = latest 00/06/12/18 UTC mark (override with --t0 for testing).
+Issue time t0 = latest ISSUE_STEP_H-hour UTC mark (6 -> 00/06/12/18 UTC; --t0 overrides).
 Inputs (identical to leaderboard/predict_submission.py):
   - past solar wind: ACE SWEPAM hourly speed with time_tag <= t0-2h (causal), 6h-gap
     interpolation inside the slice, 20 trailing 6-h bin means; all-missing ->
@@ -12,18 +12,20 @@ Inputs (identical to leaderboard/predict_submission.py):
     validated for the 2026 replay:
       DN/scale (193:/4, 211:/1) -> clip(10, 4096) -> /disk-median -> resize 512
       -> log10 -> per-image min-max uint8 -> vertical flip -> (64px grayscale at inference)
-    Frames are cached as 512px PNGs under data/sw72/aia/<wave>/ so each run only
-    downloads the frames it does not have yet; frames older than 8 days are pruned.
+    Frames are cached as 512px PNGs under .cache/sw72_aia/<wave>/ (kept out of git, restored
+    by actions/cache) so each run only downloads the frames it does not have yet; frames
+    older than 6 days are pruned. 256px JPEG thumbnails of the newest frames go to data/sw72/.
   - model: model/sw72_ace_v1_arch.json + model/sw72_ace_v1_weights.h5 (Keras, TF 2.10)
 Outputs (data/sw72/):
   forecast.json          current forecast + observed history + provenance (dashboard input)
-  forecast_archive.json  rolling list of past forecasts (last 21 days) for verification plots
-  aia/<wave>/*.png       frame cache, aia/manifest.csv (frame time, url, raw disk median)
+  forecast_archive.json  past forecasts issued on the 6-hour grid (last 21 days)
+  latest_aia<wave>.jpg   thumbnails of the newest input frames (dashboard)
 """
 import argparse
 import csv
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -43,9 +45,12 @@ from PIL import Image, ImageOps
 
 MODEL_ARCH = Path("model/sw72_ace_v1_arch.json")
 MODEL_WEIGHTS = Path("model/sw72_ace_v1_weights.h5")
+# GitHub Release asset used when neither the h5 nor its .part files are in the repo
+WEIGHTS_URL = ("https://github.com/Jihyeon-Son/Jihyeon-Son.github.io/releases/download/"
+               "sw72-v1/sw72_ace_v1_weights.h5")
 
 DATA_DIR = Path("data/sw72")
-AIA_DIR = DATA_DIR / "aia"
+AIA_DIR = Path(os.environ.get("SW72_AIA_CACHE", ".cache/sw72_aia"))   # not committed
 MANIFEST_CSV = AIA_DIR / "manifest.csv"
 OUTPUT_JSON = DATA_DIR / "forecast.json"
 ARCHIVE_JSON = DATA_DIR / "forecast_archive.json"
@@ -65,6 +70,7 @@ JSOC_SYN_URL = ("https://jsoc1.stanford.edu/data/aia/synoptic/{y}/{m:02d}/{d:02d
 # Model / preprocessing constants (from the leaderboard pipeline)
 # ============================================================
 
+ISSUE_STEP_H = 6           # issue cadence in hours (1 = hourly, 6 = 00/06/12/18 UTC); cron must match
 INPUT_SEQ_SW = 20          # 6-h bins of past speed
 IMG_SEQ = 10               # frames per sample
 IMG_STEP_H = 12
@@ -77,7 +83,8 @@ MAX_IMG_OFFSET_H = 12.0    # fall back to earlier frames up to this far before n
 WAVES = ["0211", "0193"]   # channel order of the image tensor
 DN_SCALE = {"0193": 4.0, "0211": 1.0}
 AEC_LOW_FRACTION = 0.4     # skip frame if raw disk median < 40% of running median (AEC short exposure)
-CACHE_KEEP_DAYS = 8
+CACHE_KEEP_DAYS = 6
+THUMB_SIZE = 256
 ARCHIVE_KEEP_DAYS = 21
 HISTORY_DAYS = 5
 PRED_CLIP = (200.0, 1100.0)
@@ -101,9 +108,9 @@ def utc_now():
 
 
 def latest_issue_time(now=None):
-    """Most recent 00/06/12/18 UTC mark at or before now."""
+    """Most recent ISSUE_STEP_H-hour UTC mark at or before now."""
     now = now or utc_now()
-    h = (now.hour // 6) * 6
+    h = (now.hour // ISSUE_STEP_H) * ISSUE_STEP_H
     return pd.Timestamp(now.replace(hour=h, minute=0, second=0, microsecond=0)).tz_convert(None)
 
 
@@ -127,7 +134,7 @@ def fetch_bytes(url, ok_404=False):
 def atomic_write_json(path, payload):
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False, allow_nan=False)
+        json.dump(payload, f, indent=None, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     tmp.replace(path)
 
 
@@ -337,8 +344,51 @@ def load_frame_64(path):
 # Model
 # ============================================================
 
+def _expected_sha():
+    sha_file = MODEL_WEIGHTS.parent / "weights.sha256"
+    return sha_file.read_text().split()[0] if sha_file.exists() else None
+
+
+def _finish_weights(tmp, digest, how):
+    expected = _expected_sha()
+    if expected and digest != expected:
+        tmp.unlink()
+        raise RuntimeError(f"weights checksum mismatch after {how} ({digest} != {expected})")
+    tmp.replace(MODEL_WEIGHTS)
+    print(f"[INFO] weights ready via {how} (sha256 {digest[:12]}...)")
+
+
+def assemble_weights():
+    """Obtain the 60 MB weights file (too big for GitHub's web upload). In order:
+      1. model/sw72_ace_v1_weights.h5 already present
+      2. concatenate model/sw72_ace_v1_weights.h5.part0, .part1, ... (8 MB chunks)
+      3. download from the GitHub Release asset WEIGHTS_URL (env SW72_WEIGHTS_URL overrides)
+    Every path is verified against model/weights.sha256."""
+    if MODEL_WEIGHTS.exists():
+        return
+    import hashlib
+    tmp = MODEL_WEIGHTS.with_suffix(".h5.tmp")
+    parts = sorted(MODEL_WEIGHTS.parent.glob(MODEL_WEIGHTS.name + ".part*"),
+                   key=lambda p: int(p.suffix.replace(".part", "")))
+    if parts:
+        h = hashlib.sha256()
+        with open(tmp, "wb") as out:
+            for p in parts:
+                chunk = p.read_bytes()
+                h.update(chunk)
+                out.write(chunk)
+        _finish_weights(tmp, h.hexdigest(), f"{len(parts)} part files")
+        return
+    url = os.environ.get("SW72_WEIGHTS_URL", WEIGHTS_URL)
+    print(f"[INFO] downloading weights from {url}")
+    raw = fetch_bytes(url)
+    tmp.write_bytes(raw)
+    _finish_weights(tmp, hashlib.sha256(raw).hexdigest(), "release download")
+
+
 def load_model():
     import tensorflow as tf
+    assemble_weights()
     with open(MODEL_ARCH, encoding="utf-8") as f:
         model = tf.keras.models.model_from_json(f.read())
     model.load_weights(str(MODEL_WEIGHTS))
@@ -413,10 +463,16 @@ def run(t0):
             t, p, off = used[wave][k]
             img[0, k, :, :, c] = load_frame_64(p)
             rec[f"aia{wave}_time"] = iso(t)
-            rec[f"aia{wave}_path"] = p.as_posix()
+            rec[f"aia{wave}_file"] = p.name
             rec[f"aia{wave}_offset_h"] = off
         frames_out.append(rec)
     max_off = max(r[f"aia{w}_offset_h"] for r in frames_out for w in WAVES)
+    thumbs = {}
+    for wave in WAVES:
+        t, p, _ = used[wave][-1]
+        out = DATA_DIR / f"latest_aia{wave}.jpg"
+        Image.open(p).convert("L").resize((THUMB_SIZE, THUMB_SIZE), Image.LANCZOS).save(out, quality=85)
+        thumbs[f"aia{wave}"] = out.as_posix()
     print(f"[INFO] images ready, max offset from nominal {max_off:.0f}h")
 
     # --- inference ---
@@ -439,7 +495,8 @@ def run(t0):
     forecast = [{"time": iso(t), "speed_pred": round(float(v), 1)} for t, v in zip(target_times, pred)]
     entry = {"t0": iso(t0), "created_utc": iso(utc_now()),
              "speed_pred": [round(float(v), 1) for v in pred], "sw_fallback": sw_fallback or ""}
-    archive = update_archive(entry, t0)
+    # archive only the 00/06/12/18 UTC issues (keeps the file small even if run hourly)
+    archive = update_archive(entry, t0) if t0.hour % 6 == 0 else load_archive()
     previous = [a for a in archive if pd.Timestamp(a["t0"]).tz_convert(None) <= t0 - pd.Timedelta(hours=24)]
     prev_forecast = None
     if previous:
@@ -474,7 +531,7 @@ def run(t0):
         "sw_fallback": sw_fallback or "",
         "max_image_offset_h": max_off,
         "input_bins": [{"time": iso(t), "speed": round(float(v), 1)} for t, v in zip(bin_times, sw_bins)],
-        "latest_images": {f"aia{w}": used[w][-1][1].as_posix() for w in WAVES},
+        "latest_images": thumbs,
         "latest_image_times": {f"aia{w}": iso(used[w][-1][0]) for w in WAVES},
         "frames": frames_out,
         "history": history,
@@ -494,7 +551,7 @@ def main():
     ap.add_argument("--t0", default=None, help="issue time override, e.g. 2026-09-08T00:00 (UTC)")
     args = ap.parse_args()
     t0 = pd.Timestamp(args.t0) if args.t0 else latest_issue_time()
-    assert t0.hour % 6 == 0 and t0.minute == 0, "t0 must be on the 00/06/12/18 UTC grid"
+    assert t0.minute == 0 and t0.second == 0, "t0 must be a whole hour"
     try:
         run(t0)
     except Exception as exc:
