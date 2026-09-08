@@ -316,7 +316,7 @@
             {
                 label: "Observed electron flux",
                 data: history.map(d => ({
-                    x: d.time,
+                    x: Date.parse(d.time),
                     y: d.electron_flux
                 })),
                 borderWidth: 2,
@@ -326,7 +326,7 @@
             {
                 label: "Forecast electron flux",
                 data: forecast.map(d => ({
-                    x: d.time,
+                    x: Date.parse(d.time),
                     y: d.electron_flux_pred
                 })),
                 borderWidth: 2,
@@ -498,14 +498,14 @@
 
         const observedData = history
             .map(row => ({
-                x: row.time,
+                x: Date.parse(row.time),
                 y: getSymhValue(row)
             }))
             .filter(row => row.y !== null);
 
         const forecastData = forecast
             .map(row => ({
-                x: row.time,
+                x: Date.parse(row.time),
                 y: getSymhValue(row)
             }))
             .filter(row => row.y !== null);
@@ -683,7 +683,7 @@
         const datasets = [
             {
                 label: "Observed ACE speed",
-                data: history.map(d => ({ x: d.time, y: d.speed })),
+                data: history.map(d => ({ x: Date.parse(d.time), y: d.speed })),
                 borderColor: "#1f77b4",
                 backgroundColor: "#1f77b4",
                 borderWidth: 2,
@@ -693,7 +693,7 @@
             },
             {
                 label: "Forecast (issued " + formatUTC(data.forecast_base_time_utc) + ")",
-                data: forecast.map(d => ({ x: d.time, y: d.speed_pred })),
+                data: forecast.map(d => ({ x: Date.parse(d.time), y: d.speed_pred })),
                 borderColor: "#d62728",
                 backgroundColor: "#d62728",
                 borderWidth: 2,
@@ -706,7 +706,7 @@
         if (previous.length) {
             datasets.push({
                 label: "Previous forecast (issued " + formatUTC(data.previous_forecast.t0) + ")",
-                data: previous.map(d => ({ x: d.time, y: d.speed_pred })),
+                data: previous.map(d => ({ x: Date.parse(d.time), y: d.speed_pred })),
                 borderColor: "#ff9896",
                 backgroundColor: "#ff9896",
                 borderWidth: 1.5,
