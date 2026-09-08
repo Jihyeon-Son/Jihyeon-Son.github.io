@@ -23,6 +23,7 @@ OUTPUT_FORECAST_JSON = DATA_DIR / "forecast.json"
 OUTPUT_INPUT_CSV = DATA_DIR / "input_latest_3days.csv"
 OUTPUT_INPUT_JSON = DATA_DIR / "latest_inputs.json"
 SOLAR_WIND_HISTORY_CSV = DATA_DIR / "solar_wind_hourly_history.csv"
+OUTPUT_ARCHIVE_JSON = DATA_DIR / "forecast_archive.json"
 
 
 # ============================================================
@@ -43,6 +44,11 @@ URLS = {
 # ============================================================
 
 MODEL_INPUT_HOURS = 72
+# Past forecasts kept for the "previous forecast" overlay: only issues on the
+# 00/06/12/18 UTC grid are archived (file changes 4x/day, not hourly), 7 days retained.
+ARCHIVE_STEP_HOURS = 6
+ARCHIVE_KEEP_DAYS = 7
+PREVIOUS_FORECAST_MIN_AGE_HOURS = 24
 MAX_INTERPOLATED_SOLAR_WIND_GAP_HOURS = 3
 REQUEST_TIMEOUT_SECONDS = 40
 REQUEST_ATTEMPTS = 3
@@ -735,6 +741,66 @@ def save_latest_inputs(df, forecast_time):
     atomic_write_json(OUTPUT_INPUT_JSON, payload)
 
 
+def load_forecast_archive():
+    if not OUTPUT_ARCHIVE_JSON.exists():
+        return []
+    try:
+        with open(OUTPUT_ARCHIVE_JSON, "r", encoding="utf-8") as f:
+            return json.load(f).get("forecasts", [])
+    except (OSError, ValueError):
+        print("[WARN] Could not read forecast archive; starting a new one")
+        return []
+
+
+def update_forecast_archive(forecast_time, forecast_times, pred_flux):
+    """Store this issue (if on the archive grid) and drop entries older than ARCHIVE_KEEP_DAYS."""
+    archive = load_forecast_archive()
+    base_iso = forecast_time.isoformat()
+
+    if forecast_time.hour % ARCHIVE_STEP_HOURS == 0:
+        archive = [item for item in archive if item.get("forecast_base_time_utc") != base_iso]
+        archive.append(
+            {
+                "forecast_base_time_utc": base_iso,
+                "created_utc": datetime.now(timezone.utc).isoformat(),
+                "forecast": [
+                    {"time": t.isoformat(), "electron_flux_pred": float(y)}
+                    for t, y in zip(forecast_times, pred_flux)
+                ],
+            }
+        )
+
+    cutoff = forecast_time - timedelta(days=ARCHIVE_KEEP_DAYS)
+    kept = []
+    for item in archive:
+        base = pd.to_datetime(item.get("forecast_base_time_utc"), utc=True, errors="coerce")
+        if pd.notna(base) and base >= cutoff:
+            kept.append(item)
+    kept.sort(key=lambda item: item["forecast_base_time_utc"])
+
+    atomic_write_json(
+        OUTPUT_ARCHIVE_JSON,
+        {"updated_utc": datetime.now(timezone.utc).isoformat(), "forecasts": kept},
+    )
+    return kept
+
+
+def select_previous_forecast(archive, forecast_time):
+    """Most recent archived issue at least PREVIOUS_FORECAST_MIN_AGE_HOURS before this one."""
+    latest = forecast_time - timedelta(hours=PREVIOUS_FORECAST_MIN_AGE_HOURS)
+    candidates = [
+        item for item in archive
+        if pd.to_datetime(item["forecast_base_time_utc"], utc=True) <= latest
+    ]
+    if not candidates:
+        return None
+    item = candidates[-1]
+    return {
+        "forecast_base_time_utc": item["forecast_base_time_utc"],
+        "forecast": item["forecast"],
+    }
+
+
 def save_forecast_json(df, forecast_time, pred_norm, pred_flux):
     forecast_times = [
         forecast_time + timedelta(hours=i + 1) for i in range(len(pred_flux))
@@ -782,6 +848,9 @@ def save_forecast_json(df, forecast_time, pred_norm, pred_flux):
             )
         ],
     }
+
+    archive = update_forecast_archive(forecast_time, forecast_times, pred_flux)
+    payload["previous_forecast"] = select_previous_forecast(archive, forecast_time)
 
     atomic_write_json(OUTPUT_FORECAST_JSON, payload)
 
