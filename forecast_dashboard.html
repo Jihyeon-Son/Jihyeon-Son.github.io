@@ -311,8 +311,9 @@
     function buildElectronDatasets(data) {
         const history = data.history || [];
         const forecast = data.forecast || [];
+        const previous = (data.previous_forecast && data.previous_forecast.forecast) || [];
 
-        return [
+        const datasets = [
             {
                 label: "Observed electron flux",
                 data: history.map(d => ({
@@ -324,7 +325,8 @@
                 tension: 0.25
             },
             {
-                label: "Forecast electron flux",
+                label: "Forecast electron flux (issued " +
+                    formatUTC(data.forecast_base_time_utc) + ")",
                 data: forecast.map(d => ({
                     x: Date.parse(d.time),
                     y: d.electron_flux_pred
@@ -335,6 +337,25 @@
                 tension: 0.25
             }
         ];
+
+        if (previous.length) {
+            datasets.push({
+                label: "Previous forecast (issued " +
+                    formatUTC(data.previous_forecast.forecast_base_time_utc) + ")",
+                data: previous.map(d => ({
+                    x: Date.parse(d.time),
+                    y: d.electron_flux_pred
+                })),
+                borderColor: "#ffb1c1",
+                backgroundColor: "#ffb1c1",
+                borderWidth: 1.5,
+                pointRadius: 0,
+                borderDash: [3, 4],
+                tension: 0.25
+            });
+        }
+
+        return datasets;
     }
 
     function drawElectronChart(data) {
