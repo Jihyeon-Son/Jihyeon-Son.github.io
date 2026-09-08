@@ -3,8 +3,8 @@ name: Update sw72 forecast
 on:
   workflow_dispatch:
   schedule:
-    # 20 min after each 00/06/12/18 UTC issue time (ACE hourly file for t0-2h and
-    # the AIA frame at t0-6h are both available by then)
+    # 20 min after each 00/06/12/18 UTC issue time (ACE hourly file for t0-2h and the
+    # AIA frame at t0-6h are both available by then). Must match ISSUE_STEP_H in the script.
     - cron: "20 0,6,12,18 * * *"
 
 permissions:
@@ -34,6 +34,18 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "numpy<2" pandas requests h5py pillow astropy "tensorflow==2.10.*"
 
+      # AIA frame cache (512px PNGs, ~20 MB) and the 60 MB weights file live outside git.
+      # A new cache entry is saved each run; restore-keys picks the most recent one.
+      - name: Restore AIA frame cache and model weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/sw72_aia
+            model/sw72_ace_v1_weights.h5
+          key: sw72-cache-${{ github.run_id }}
+          restore-keys: |
+            sw72-cache-
+
       - name: Run 72-hour solar wind forecast
         run: |
           python -u scripts/run_sw72_forecast.py
@@ -44,7 +56,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add -A data/sw72
+          git add data/sw72/forecast.json data/sw72/forecast_archive.json data/sw72/latest_aia0193.jpg data/sw72/latest_aia0211.jpg 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No data changes"
