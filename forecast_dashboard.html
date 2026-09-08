@@ -124,6 +124,32 @@
                 height: 420px;
             }
         }
+
+        .aia-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .aia-card {
+            text-align: center;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .aia-card img {
+            width: 220px;
+            height: 220px;
+            border-radius: 8px;
+            background: #000;
+            transform: scaleY(-1); /* cached model frames are stored vertically flipped */
+        }
+
+        .note {
+            color: #666;
+            font-size: 13px;
+        }
     </style>
 </head>
 
@@ -185,6 +211,48 @@
             <div class="chart-wrap">
                 <canvas id="symhForecastChart"></canvas>
             </div>
+        </div>
+    </section>
+
+    <hr class="section-divider">
+
+    <section class="forecast-section">
+        <h1>🌬️ 72-hour Solar Wind Speed Forecast</h1>
+
+        <ul class="subtitle">
+            <li>Hourly solar wind speed at L1 for the next 72 hours from SDO/AIA 211 &amp; 193 &Aring; images (past 5 days) and ACE SWEPAM speed.</li>
+            <li>Deep-learning model developed for the FDL 2026 solar-wind challenge (Son et al. 2023, Space Weather, extended to hourly 72-h output). Issued every 6 hours at 00/06/12/18 UTC.</li>
+        </ul>
+
+        <div class="status-card">
+            <p><strong>Status:</strong> <span id="sw72Status">Loading forecast data...</span></p>
+            <p><strong>Last updated:</strong> <span id="sw72CreatedTime">-</span></p>
+            <p><strong>Forecast base time:</strong> <span id="sw72BaseTime">-</span></p>
+            <p><strong>Forecast period:</strong> <span id="sw72Period">-</span></p>
+            <p><strong>Latest ACE speed:</strong> <span id="sw72LatestObserved">-</span></p>
+            <p><strong>Predicted max (next 72 h):</strong> <span id="sw72PredMax">-</span></p>
+            <p><strong>Message:</strong> <span id="sw72Message">-</span></p>
+
+            <button class="reload-btn" onclick="loadSw72Forecast()">
+                Reload solar-wind data
+            </button>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-wrap">
+                <canvas id="sw72ForecastChart"></canvas>
+            </div>
+            <div class="aia-row">
+                <div class="aia-card">
+                    <img id="sw72Img211" alt="AIA 211 latest input frame">
+                    <div>AIA 211 &Aring; &middot; <span id="sw72Img211Time">-</span></div>
+                </div>
+                <div class="aia-card">
+                    <img id="sw72Img193" alt="AIA 193 latest input frame">
+                    <div>AIA 193 &Aring; &middot; <span id="sw72Img193Time">-</span></div>
+                </div>
+            </div>
+            <p class="note">Newest of the 10 input frames (t0 &minus; 6 h). Frames are the model's preprocessed synoptic images (log-scaled, per-image normalised), not calibrated intensities.</p>
         </div>
     </section>
 
@@ -604,8 +672,198 @@
         }
     }
 
+
+    let sw72ForecastChart = null;
+
+    function buildSw72Datasets(data) {
+        const history = data.history || [];
+        const forecast = data.forecast || [];
+        const previous = (data.previous_forecast && data.previous_forecast.forecast) || [];
+
+        const datasets = [
+            {
+                label: "Observed ACE speed",
+                data: history.map(d => ({ x: d.time, y: d.speed })),
+                borderColor: "#1f77b4",
+                backgroundColor: "#1f77b4",
+                borderWidth: 2,
+                pointRadius: 0,
+                spanGaps: false,
+                tension: 0.15
+            },
+            {
+                label: "Forecast (issued " + formatUTC(data.forecast_base_time_utc) + ")",
+                data: forecast.map(d => ({ x: d.time, y: d.speed_pred })),
+                borderColor: "#d62728",
+                backgroundColor: "#d62728",
+                borderWidth: 2,
+                pointRadius: 0,
+                borderDash: [8, 5],
+                tension: 0.25
+            }
+        ];
+
+        if (previous.length) {
+            datasets.push({
+                label: "Previous forecast (issued " + formatUTC(data.previous_forecast.t0) + ")",
+                data: previous.map(d => ({ x: d.time, y: d.speed_pred })),
+                borderColor: "#ff9896",
+                backgroundColor: "#ff9896",
+                borderWidth: 1.5,
+                pointRadius: 0,
+                borderDash: [3, 4],
+                tension: 0.25
+            });
+        }
+
+        return datasets;
+    }
+
+    function drawSw72Chart(data) {
+        const ctx = document
+            .getElementById("sw72ForecastChart")
+            .getContext("2d");
+
+        if (sw72ForecastChart) {
+            sw72ForecastChart.destroy();
+        }
+
+        sw72ForecastChart = new Chart(ctx, {
+            type: "line",
+            data: {
+                datasets: buildSw72Datasets(data)
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                parsing: false,
+                interaction: {
+                    mode: "nearest",
+                    intersect: false
+                },
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: "top"
+                    },
+                    tooltip: {
+                        callbacks: {
+                            title: function(items) {
+                                if (!items.length) return "";
+                                return formatUTC(items[0].raw.x);
+                            },
+                            label: function(item) {
+                                return item.dataset.label + ": " +
+                                    Number(item.raw.y).toFixed(0) + " km/s";
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: "time",
+                        time: {
+                            unit: "day",
+                            tooltipFormat: "yyyy-MM-dd HH:mm"
+                        },
+                        title: {
+                            display: true,
+                            text: "Time [UTC]"
+                        }
+                    },
+                    y: {
+                        suggestedMin: 250,
+                        suggestedMax: 800,
+                        title: {
+                            display: true,
+                            text: "Solar wind speed [km/s]"
+                        },
+                        grid: {
+                            color: "#d0d0d0"
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async function loadSw72Forecast() {
+        const statusEl = document.getElementById("sw72Status");
+
+        try {
+            statusEl.className = "";
+            statusEl.textContent = "Loading forecast data...";
+
+            const response = await fetch(
+                "data/sw72/forecast.json?cache_bust=" + Date.now()
+            );
+
+            if (!response.ok) {
+                throw new Error("Could not load data/sw72/forecast.json");
+            }
+
+            const data = await response.json();
+
+            if (!data.forecast || !data.forecast.length) {
+                throw new Error(data.status || "No forecast in file");
+            }
+
+            const failed = data.last_attempt_status &&
+                data.last_attempt_status.indexOf("FAILED") === 0;
+
+            statusEl.textContent = failed
+                ? "Showing last successful forecast; latest run failed."
+                : (data.status || "Forecast loaded.");
+            statusEl.className = failed ? "standby" : "active";
+
+            document.getElementById("sw72CreatedTime").textContent =
+                formatUTC(data.created_utc);
+
+            document.getElementById("sw72BaseTime").textContent =
+                formatUTC(data.forecast_base_time_utc);
+
+            document.getElementById("sw72Period").textContent =
+                formatUTC(data.target_start_utc) + " - " +
+                formatUTC(data.target_end_utc);
+
+            const observed = (data.history || []).filter(d => Number.isFinite(Number(d.speed)) && d.speed !== null);
+            const latest = observed.length ? observed[observed.length - 1] : null;
+            document.getElementById("sw72LatestObserved").textContent =
+                latest ? Number(latest.speed).toFixed(0) + " km/s at " + formatUTC(latest.time) : "-";
+
+            const preds = data.forecast.map(d => d.speed_pred);
+            const maxPred = Math.max.apply(null, preds);
+            const maxIdx = preds.indexOf(maxPred);
+            document.getElementById("sw72PredMax").textContent =
+                maxPred.toFixed(0) + " km/s at " + formatUTC(data.forecast[maxIdx].time);
+
+            document.getElementById("sw72Message").textContent =
+                (failed ? data.last_attempt_status + " " : "") + (data.message || "-");
+
+            const cacheBust = "?cache_bust=" + Date.now();
+            if (data.latest_images) {
+                document.getElementById("sw72Img211").src = data.latest_images.aia0211 + cacheBust;
+                document.getElementById("sw72Img193").src = data.latest_images.aia0193 + cacheBust;
+            }
+            if (data.latest_image_times) {
+                document.getElementById("sw72Img211Time").textContent = formatUTC(data.latest_image_times.aia0211);
+                document.getElementById("sw72Img193Time").textContent = formatUTC(data.latest_image_times.aia0193);
+            }
+
+            drawSw72Chart(data);
+
+        } catch (error) {
+            console.error(error);
+            statusEl.className = "error";
+            statusEl.textContent = "Solar-wind forecast data are not available yet.";
+            document.getElementById("sw72Message").textContent =
+                "Check whether GitHub Actions created data/sw72/forecast.json.";
+        }
+    }
+
     loadElectronForecast();
     loadSymhForecast();
+    loadSw72Forecast();
 </script>
 
 </body>
