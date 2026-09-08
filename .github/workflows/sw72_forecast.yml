@@ -56,7 +56,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git add data/sw72/forecast.json data/sw72/forecast_archive.json data/sw72/latest_aia0193.jpg data/sw72/latest_aia0211.jpg 2>/dev/null || true
+          git add -A data/sw72
 
           if git diff --cached --quiet; then
             echo "No data changes"
