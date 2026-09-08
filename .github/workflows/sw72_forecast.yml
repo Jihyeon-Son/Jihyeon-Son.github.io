@@ -1,0 +1,55 @@
+name: Update sw72 forecast
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 20 min after each 00/06/12/18 UTC issue time (ACE hourly file for t0-2h and
+    # the AIA frame at t0-6h are both available by then)
+    - cron: "20 0,6,12,18 * * *"
+
+permissions:
+  contents: write
+
+# same group as forecast.yml so the two jobs never push at the same time
+concurrency:
+  group: forecast-dashboard-update
+  cancel-in-progress: false
+
+jobs:
+  sw72:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" pandas requests h5py pillow astropy "tensorflow==2.10.*"
+
+      - name: Run 72-hour solar wind forecast
+        run: |
+          python -u scripts/run_sw72_forecast.py
+
+      - name: Commit updated data files
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add -A data/sw72
+
+          if git diff --cached --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "Update sw72 forecast data"
+            git pull --rebase
+            git push
+          fi
