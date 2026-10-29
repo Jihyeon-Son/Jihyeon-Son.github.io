@@ -48,7 +48,18 @@ CADENCE = "30min"
 INPUT_BINS = 24
 FORECAST_BINS = 24
 TRIGGER_BZ = -3.0
-TRIGGER_BINS = 12  # 6 hours at 30-minute cadence
+# The model runs as soon as the latest 30-min bin has Bz <= TRIGGER_BZ (TRIGGER_BINS = 1).
+# While the southward streak is shorter than ESTABLISHED_BINS (2 h) the forecast is labelled
+# "preliminary"; afterwards "established". Training windows were selected by a 6-h sustained
+# southward interval inside the 12-h target window, so every forecast is conditional on the
+# southward IMF persisting (see ASSUMPTION_NOTE).
+TRIGGER_BINS = 1
+ESTABLISHED_BINS = 4  # 2 hours at 30-minute cadence
+ASSUMPTION_NOTE = (
+    "Conditional forecast: the model was trained only on intervals in which Bz <= -3 nT persisted "
+    "for >= 6 h within the 12-h forecast window, so the forecast assumes the southward IMF continues. "
+    "If Bz turns northward soon, the forecast will be too deep (typical bias about -14 nT in 2020-2025 tests)."
+)
 
 
 def fetch_json(url):
@@ -240,9 +251,23 @@ def build_model_input():
     return df, end, availability, None
 
 
+def southward_streak(df):
+    """Number of consecutive latest 30-min bins with Bz <= TRIGGER_BZ."""
+    streak = 0
+    for value in df["Bz"].iloc[::-1]:
+        if pd.notna(value) and value <= TRIGGER_BZ:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 def trigger_is_active(df):
-    recent = df["Bz"].iloc[-TRIGGER_BINS:]
-    return len(recent) == TRIGGER_BINS and bool((recent <= TRIGGER_BZ).all())
+    return southward_streak(df) >= TRIGGER_BINS
+
+
+def forecast_grade(streak):
+    return "established" if streak >= ESTABLISHED_BINS else "preliminary"
 
 
 def load_model():
@@ -279,19 +304,28 @@ def predict(df):
     return pred_norm, pred
 
 
-def save_payload(status, base_time, availability, df=None, pred_norm=None, pred=None, message=""):
+def save_payload(status, base_time, availability, df=None, pred_norm=None, pred=None, message="",
+                 streak=0):
     payload = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "forecast_base_time_utc": base_time.isoformat(),
         "status": status,
         "message": message,
         "trigger": {
-            "definition": "Bz <= -3 nT continuously for the latest 6 hours",
+            "definition": (
+                f"Bz <= {TRIGGER_BZ:g} nT in the latest 30-min bin; "
+                f"'preliminary' until the southward streak reaches {ESTABLISHED_BINS * 0.5:g} h, then 'established'"
+            ),
             "threshold_nt": TRIGGER_BZ,
             "required_bins": TRIGGER_BINS,
+            "established_bins": ESTABLISHED_BINS,
             "cadence": CADENCE,
         },
         "trigger_active": status == "forecast_active",
+        "southward_streak_bins": int(streak),
+        "southward_streak_hours": round(streak * 0.5, 1),
+        "forecast_grade": forecast_grade(streak) if status == "forecast_active" else None,
+        "assumption": ASSUMPTION_NOTE,
         "symh_source": availability.get("symh_source", "none"),
         "data_availability": availability,
         "history": [],
@@ -338,25 +372,39 @@ def main():
         print(f"[WAIT] {error}")
         return
 
+    streak = southward_streak(df)
+
     if not trigger_is_active(df):
-        recent_min = float(df["Bz"].iloc[-TRIGGER_BINS:].min())
+        latest_bz = float(df["Bz"].iloc[-1])
         save_payload(
-            "standby", base_time, availability, df=df,
+            "standby", base_time, availability, df=df, streak=streak,
             message=(
-                "Forecast is on standby because Bz has not remained <= -3 nT "
-                f"for the latest 6 hours. Recent 6-hour minimum Bz: {recent_min:.2f} nT."
+                f"Forecast is on standby because the latest Bz ({latest_bz:.2f} nT) is above "
+                f"{TRIGGER_BZ:g} nT."
             ),
         )
         print("[STANDBY] Southward-Bz trigger is not active.")
         return
 
     pred_norm, pred = predict(df)
+    grade = forecast_grade(streak)
+    hours = streak * 0.5
+    if grade == "preliminary":
+        message = (
+            f"Southward IMF detected (Bz <= {TRIGGER_BZ:g} nT for {hours:g} h so far). "
+            f"Preliminary 12-hour SYM-H forecast; it becomes 'established' once the streak reaches "
+            f"{ESTABLISHED_BINS * 0.5:g} h. Valid only if the southward IMF persists."
+        )
+    else:
+        message = (
+            f"Sustained southward IMF (Bz <= {TRIGGER_BZ:g} nT for {hours:g} h). "
+            "12-hour SYM-H forecast generated; valid only if the southward IMF persists."
+        )
     save_payload(
-        "forecast_active", base_time, availability, df=df,
-        pred_norm=pred_norm, pred=pred,
-        message="Strong southward-Bz trigger is active; 12-hour SYM-H forecast generated.",
+        "forecast_active", base_time, availability, df=df, streak=streak,
+        pred_norm=pred_norm, pred=pred, message=message,
     )
-    print("[DONE] SYM-H forecast generated.")
+    print(f"[DONE] SYM-H forecast generated ({grade}, streak {hours:g} h).")
 
 
 if __name__ == "__main__":
