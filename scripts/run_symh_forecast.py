@@ -23,7 +23,16 @@ OUTPUT_INPUT = DATA_DIR / "symh_input_latest_12hours.csv"
 URLS = {
     "mag": "https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json",
     "wind": "https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json",
+    # Kyoto real-time (quick-look) hourly Dst, relayed by NOAA SWPC (~1 h latency).
+    "dst": "https://services.swpc.noaa.gov/products/kyoto-dst.json",
 }
+
+# How to fill the SYM-H input channel when no near-real-time SYM-H feed is configured.
+#   "dst"  -> real-time hourly Kyoto Dst interpolated to 30 min (clearly flagged in the output)
+#   "none" -> leave empty; the forecast stays in "waiting_for_data"
+# Kyoto publishes SYM-H itself only as provisional data, roughly one month late, so without an
+# in-house feed the Dst proxy is the only way to run in real time.
+SYMH_FALLBACK = os.environ.get("SYMH_FALLBACK", "dst").strip().lower()
 
 FEATURES = ["Bmag", "By", "Bz", "V", "N", "P", "Ey", "sym-h"]
 MIN_VAL = np.array([
@@ -99,7 +108,8 @@ def load_current_solar_wind():
     )
 
     df = mag30.join(wind30, how="outer").reset_index()
-    df["P"] = 1.6726e-6 * df["N"] * np.square(df["V"])
+    # OMNI flow pressure definition (used for the training data): P = 2e-6 * Np * V^2 [nPa]
+    df["P"] = 2.0e-6 * df["N"] * np.square(df["V"])
     df["Ey"] = -df["V"] * df["Bz"] * 1e-3
     return df
 
@@ -122,18 +132,42 @@ def update_solar_wind_history(new_df):
     return merged
 
 
+def load_dst_proxy():
+    """Real-time hourly Kyoto Dst (via NOAA SWPC) interpolated to the 30-min grid."""
+    raw = fetch_json(URLS["dst"])
+    if isinstance(raw, list) and raw and isinstance(raw[0], list):
+        df = pd.DataFrame(raw[1:], columns=raw[0])
+    else:
+        df = pd.DataFrame(raw)
+    df = pd.DataFrame({
+        "time": pd.to_datetime(df["time_tag"], utc=True, errors="coerce"),
+        "sym-h": pd.to_numeric(df["dst"], errors="coerce"),
+    }).dropna().sort_values("time").drop_duplicates("time", keep="last")
+    out = (
+        df.set_index("time")[["sym-h"]]
+        .resample(CADENCE)
+        .mean()
+        .interpolate(method="time", limit=2, limit_direction="forward")
+        .reset_index()
+    )
+    return out
+
+
 def load_symh_observations():
     """
-    Load observed SYM-H from either:
+    Load observed SYM-H from, in order of preference:
       1. SYM_H_URL environment variable (CSV or JSON), or
-      2. data/symh_observed.csv in the repository.
+      2. data/symh_observed.csv in the repository, or
+      3. (SYMH_FALLBACK == "dst") real-time hourly Kyoto Dst as a proxy.
 
-    Required columns: time and sym-h (SYM-H/symh are also accepted).
-    The source must provide near-real-time observed SYM-H; Dst is not substituted.
+    Required columns for 1./2.: time and sym-h (SYM-H/symh are also accepted).
+    Returns (dataframe with 30-min time/sym-h, source label).
     """
     url = os.environ.get("SYM_H_URL", "").strip()
+    source = "none"
 
     if url:
+        source = "SYM_H_URL"
         response = requests.get(url, timeout=60)
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").lower()
@@ -145,9 +179,16 @@ def load_symh_observations():
         else:
             df = pd.read_csv(io.StringIO(response.text))
     elif SYM_H_LOCAL.exists():
+        source = str(SYM_H_LOCAL)
         df = pd.read_csv(SYM_H_LOCAL)
+    elif SYMH_FALLBACK == "dst":
+        try:
+            return load_dst_proxy(), "kyoto_realtime_dst_proxy"
+        except Exception as exc:  # noqa: BLE001
+            print(f"[WARN] Dst proxy unavailable: {exc}")
+            return pd.DataFrame(columns=["time", "sym-h"]), "none"
     else:
-        return pd.DataFrame(columns=["time", "sym-h"])
+        return pd.DataFrame(columns=["time", "sym-h"]), "none"
 
     lower_map = {str(c).lower().strip(): c for c in df.columns}
     time_col = next((lower_map[x] for x in ["time", "time_tag", "datetime", "date"] if x in lower_map), None)
@@ -160,12 +201,13 @@ def load_symh_observations():
         "sym-h": pd.to_numeric(df[value_col], errors="coerce"),
     }).dropna()
 
-    return (
+    out = (
         out.set_index("time")[["sym-h"]]
         .resample(CADENCE, label="left", closed="left")
         .mean()
         .reset_index()
     )
+    return out, source
 
 
 def latest_complete_bin():
@@ -175,7 +217,7 @@ def latest_complete_bin():
 
 def build_model_input():
     sw = update_solar_wind_history(load_current_solar_wind())
-    symh = load_symh_observations()
+    symh, symh_source = load_symh_observations()
     end = latest_complete_bin()
     start = end - pd.Timedelta(minutes=30 * (INPUT_BINS - 1))
     grid = pd.DataFrame({"time": pd.date_range(start, end, freq=CADENCE, tz="UTC")})
@@ -184,6 +226,7 @@ def build_model_input():
     input_cols = FEATURES
 
     availability = {col: int(df[col].notna().sum()) if col in df else 0 for col in input_cols}
+    availability["symh_source"] = symh_source
     missing_cols = [col for col in input_cols if col not in df or df[col].notna().sum() == 0]
 
     if missing_cols:
@@ -248,10 +291,19 @@ def save_payload(status, base_time, availability, df=None, pred_norm=None, pred=
             "required_bins": TRIGGER_BINS,
             "cadence": CADENCE,
         },
+        "trigger_active": status == "forecast_active",
+        "symh_source": availability.get("symh_source", "none"),
         "data_availability": availability,
         "history": [],
         "forecast": [],
     }
+    if payload["symh_source"] == "kyoto_realtime_dst_proxy":
+        payload["symh_source_note"] = (
+            "SYM-H input channel filled with real-time hourly Kyoto Dst (NOAA SWPC relay) "
+            "interpolated to 30 min, because Kyoto SYM-H is only published ~1 month late."
+        )
+        if payload["message"]:
+            payload["message"] += " [SYM-H input: real-time Dst proxy]"
 
     if df is not None:
         payload["history"] = [
@@ -266,6 +318,8 @@ def save_payload(status, base_time, availability, df=None, pred_norm=None, pred=
             {"time": t.isoformat(), "sym_h_pred_norm": float(a), "sym_h_pred": float(b)}
             for t, a, b in zip(times, pred_norm, pred)
         ]
+        payload["target_start_utc"] = times[0].isoformat()
+        payload["target_end_utc"] = times[-1].isoformat()
 
     with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -274,11 +328,12 @@ def save_payload(status, base_time, availability, df=None, pred_norm=None, pred=
 def main():
     print("[INFO] Loading real-time solar-wind and SYM-H observations...")
     df, base_time, availability, error = build_model_input()
+    print(f"[INFO] SYM-H channel source: {availability.get('symh_source')}")
 
     if error:
         save_payload(
             "waiting_for_data", base_time, availability,
-            message=error + " Configure SYM_H_URL or update data/symh_observed.csv."
+            message=error + " Configure SYM_H_URL, update data/symh_observed.csv, or set SYMH_FALLBACK=dst."
         )
         print(f"[WAIT] {error}")
         return
