@@ -13,6 +13,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/luxon"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
 
     <style>
         body {
@@ -172,6 +174,51 @@
             background: #084fc7;
         }
 
+        .chart-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px 12px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .chart-controls label {
+            font-weight: 600;
+        }
+
+        .chart-controls select,
+        .chart-controls input[type="number"] {
+            padding: 5px 8px;
+            border: 1px solid #c9ccd3;
+            border-radius: 6px;
+            font-size: 14px;
+            background: white;
+        }
+
+        .chart-controls input[type="number"] {
+            width: 80px;
+        }
+
+        .chart-controls .small-btn {
+            padding: 5px 12px;
+            border: 1px solid #0d6efd;
+            border-radius: 6px;
+            background: white;
+            color: #0d6efd;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .chart-controls .small-btn:hover {
+            background: #e8f0fe;
+        }
+
+        .chart-controls .hint {
+            color: #6c757d;
+            font-size: 12px;
+        }
+
         .section-divider {
             border: 0;
             border-top: 1px solid #d9dce3;
@@ -308,6 +355,24 @@
         </div>
 
         <div class="chart-card">
+            <div class="chart-controls">
+                <label for="symhYMode">Y-axis range:</label>
+                <select id="symhYMode" onchange="onSymhYModeChange()">
+                    <option value="auto">Auto (fit data)</option>
+                    <option value="20">-20 to +20 nT</option>
+                    <option value="50">-50 to +50 nT</option>
+                    <option value="100">-100 to +50 nT</option>
+                    <option value="200">-200 to +50 nT</option>
+                    <option value="500">-500 to +100 nT</option>
+                    <option value="custom">Custom</option>
+                </select>
+                <span id="symhYCustom" style="display: none;">
+                    <input type="number" id="symhYMin" value="-100" step="10" onchange="applySymhYAxis()" aria-label="Y-axis minimum"> to
+                    <input type="number" id="symhYMax" value="50" step="10" onchange="applySymhYAxis()" aria-label="Y-axis maximum"> nT
+                </span>
+                <button type="button" class="small-btn" onclick="resetSymhYAxis()">Reset zoom</button>
+                <span class="hint">Ctrl + mouse wheel (or pinch) to zoom the Y axis, drag to pan</span>
+            </div>
             <div class="chart-wrap">
                 <canvas id="symhForecastChart"></canvas>
             </div>
@@ -659,10 +724,72 @@
         ];
     }
 
+    // ---- SYM-H Y-axis range control ----
+    const SYMH_Y_PRESETS = {
+        "20": [-20, 20],
+        "50": [-50, 50],
+        "100": [-100, 50],
+        "200": [-200, 50],
+        "500": [-500, 100]
+    };
+
+    function getSymhYRange() {
+        const mode = document.getElementById("symhYMode").value;
+
+        if (mode === "custom") {
+            const min = Number(document.getElementById("symhYMin").value);
+            const max = Number(document.getElementById("symhYMax").value);
+            if (Number.isFinite(min) && Number.isFinite(max) && min < max) {
+                return [min, max];
+            }
+            return null;
+        }
+
+        return SYMH_Y_PRESETS[mode] || null;
+    }
+
+    function applySymhYAxis() {
+        if (!symhForecastChart) return;
+
+        // Reset first: the zoom plugin's resetZoom restores the scale limits captured
+        // when the chart was created, so it must run before the selected range is written.
+        if (typeof symhForecastChart.resetZoom === "function") {
+            symhForecastChart.resetZoom("none");
+        }
+
+        const range = getSymhYRange();
+        const yScale = symhForecastChart.options.scales.y;
+
+        if (range) {
+            yScale.min = range[0];
+            yScale.max = range[1];
+        } else {
+            delete yScale.min;
+            delete yScale.max;
+        }
+
+        symhForecastChart.update();
+    }
+
+    function onSymhYModeChange() {
+        const mode = document.getElementById("symhYMode").value;
+        document.getElementById("symhYCustom").style.display =
+            mode === "custom" ? "inline" : "none";
+        applySymhYAxis();
+    }
+
+    function resetSymhYAxis() {
+        document.getElementById("symhYMode").value = "auto";
+        document.getElementById("symhYCustom").style.display = "none";
+        applySymhYAxis();
+    }
+
     function drawSymhChart(data) {
         const ctx = document
             .getElementById("symhForecastChart")
             .getContext("2d");
+
+        const yRange = getSymhYRange();
 
         if (symhForecastChart) {
             symhForecastChart.destroy();
@@ -697,6 +824,17 @@
                                     Number(item.raw.y).toFixed(1) + " nT";
                             }
                         }
+                    },
+                    zoom: {
+                        zoom: {
+                            wheel: { enabled: true, modifierKey: "ctrl" },
+                            pinch: { enabled: true },
+                            mode: "y"
+                        },
+                        pan: {
+                            enabled: true,
+                            mode: "y"
+                        }
                     }
                 },
                 scales: {
@@ -712,6 +850,8 @@
                         }
                     },
                     y: {
+                        min: yRange ? yRange[0] : undefined,
+                        max: yRange ? yRange[1] : undefined,
                         title: {
                             display: true,
                             text: "SYM-H [nT]"
