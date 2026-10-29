@@ -1,0 +1,66 @@
+name: Update SYM-H forecast
+
+on:
+  workflow_dispatch:
+  schedule:
+    # model cadence is 30 min; a few minutes after each half hour so the latest
+    # complete 30-min bin of NOAA RTSW data is available
+    - cron: "7,37 * * * *"
+
+permissions:
+  contents: write
+
+# same group as forecast.yml / sw72_forecast.yml so the jobs never push at the same time
+concurrency:
+  group: forecast-dashboard-update
+  cancel-in-progress: false
+
+jobs:
+  symh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" pandas requests
+          python -m pip install "torch==2.5.1" --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Run SYM-H forecast script
+        env:
+          # Optional: URL of a near-real-time SYM-H feed (CSV or JSON with time + sym-h columns).
+          # Set it as a repository secret/variable if you have one; otherwise the script falls
+          # back according to SYMH_FALLBACK below.
+          SYM_H_URL: ${{ secrets.SYM_H_URL }}
+          # "dst"  : fill the SYM-H input channel with real-time Kyoto Dst (hourly, via NOAA SWPC)
+          #          interpolated to 30 min. Kyoto SYM-H itself is only published ~1 month late.
+          # "none" : no proxy; the forecast stays in waiting_for_data until SYM-H is available.
+          SYMH_FALLBACK: dst
+        run: |
+          python -u scripts/run_symh_forecast.py
+
+      - name: Commit updated data files
+        if: always()
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add -A data/symh_forecast.json data/symh_input_latest_12hours.csv data/symh_solarwind_30min_history.csv
+
+          if git diff --cached --quiet; then
+            echo "No data changes"
+          else
+            git commit -m "Update SYM-H forecast data"
+            git pull --rebase
+            git push
+          fi
