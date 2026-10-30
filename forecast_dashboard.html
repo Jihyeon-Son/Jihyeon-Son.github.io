@@ -345,7 +345,7 @@
             <p><strong>Forecast base time:</strong> <span id="symhBaseTime">-</span></p>
             <p><strong>Forecast period:</strong> <span id="symhPeriod">-</span></p>
             <p><strong>Latest Bz:</strong> <span id="symhLatestBz">-</span></p>
-            <p><strong>Latest observed SYM-H:</strong> <span id="symhLatestObserved">-</span></p>
+            <p><strong id="symhObservedLabel">Latest observed SYM-H:</strong> <span id="symhLatestObserved">-</span></p>
             <p><strong>Trigger:</strong> <span id="symhTrigger">-</span></p>
             <p><strong>Forecast grade:</strong> <span id="symhGrade">-</span></p>
             <p><strong>Message:</strong> <span id="symhMessage">-</span></p>
@@ -692,6 +692,16 @@
         return null;
     }
 
+    // The SYM-H input channel is filled with the real-time (quicklook) Kyoto Dst index when no
+    // SYM-H feed is available; label it as such so it is not mistaken for the SYM-H index.
+    function usesDstProxy(data) {
+        return data && data.symh_source === "kyoto_realtime_dst_proxy";
+    }
+
+    function observedLabel(data) {
+        return usesDstProxy(data) ? "Real-time Dst (30-min interpolated)" : "Observed SYM-H";
+    }
+
     function buildSymhDatasets(data) {
         const history = data.history || [];
         const forecast = data.forecast || [];
@@ -712,7 +722,7 @@
 
         return [
             {
-                label: "Observed SYM-H",
+                label: observedLabel(data),
                 data: observedData,
                 borderWidth: 2,
                 pointRadius: 0,
@@ -859,7 +869,9 @@
                         max: yRange ? yRange[1] : undefined,
                         title: {
                             display: true,
-                            text: "SYM-H [nT]"
+                            text: usesDstProxy(data)
+                                ? "Real-time Dst (observed) / SYM-H (forecast) [nT]"
+                                : "SYM-H [nT]"
                         },
                         grid: {
                             color: "#d0d0d0"
@@ -925,6 +937,8 @@
                 latestBz === null ? "-" : latestBz.toFixed(2) + " nT";
 
             const latestSymh = getSymhValue(latest);
+            document.getElementById("symhObservedLabel").textContent =
+                usesDstProxy(data) ? "Latest real-time Dst:" : "Latest observed SYM-H:";
             document.getElementById("symhLatestObserved").textContent =
                 latestSymh === null ? "-" : latestSymh.toFixed(1) + " nT";
 
